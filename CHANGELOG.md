@@ -2,6 +2,23 @@
 
 本文件记录 dsh-wallpaper-bg 的用户可见变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.2] - 2026-09-30
+
+### 修复
+
+- **首次运行向导在 CMD 下解析报错（0.4.1 引入，修法来自 PR #1 by @Mulbaixi）**：`启动服务.bat` 写入 `we-api.config` 的 `( ... )` 命令块里，注释文本含未转义的括号，CMD 会提前闭合代码块并中止整个脚本——新用户双击向导会直接失败，`we-api.config` 写不出来，服务也就配不起来。现把括号转义为 `^(` / `^)`，写出的配置内容与措辞保持不变。
+  - 说明：PR #1 是针对 0.3.12 的旧文案提交的，那一行在 0.4.0 砍掉场景渲染时已被删除，因此合并时把同一修法应用到了 0.4.1 的新文案上。
+- `install-local.ps1` 补 UTF-8 BOM：此前在 Windows PowerShell 5.1 下中文注释与提示会乱码。
+
+### 变更
+
+- **发布脚本 `scripts/release.ps1` 更耐中断**（此前一次远端抖动或 npm 传播延迟就会把整条发布流程卡死）：
+  - `npm publish` 后注册表要几十秒到几分钟才可见，改为轮询等待（`-NpmWaitSeconds`，默认 300 秒），等不到只警告并继续发 GitHub Release。
+  - GitHub Release 步骤幂等：`gh release create` 失败重试 3 次，若 Release 其实已经建好则改为补传附件。
+  - 新增 `-Resume`：上次中断后续跑，要求工作区干净、标签指向 HEAD，跳过已成功的步骤（提交 / 打标签 / 推送 / 发布）。
+  - 远端标签查询失败重试 3 次，不再被单次远端错误打断。
+- **补齐 GitHub 社区规范文件**：`CODE_OF_CONDUCT.md`（Contributor Covenant 2.1）、`CONTRIBUTING.md`（中英双语：本地开发 / 测试 / 只读承诺 / 提交与发布流程）、`SECURITY.md`（支持范围、私密报告入口、设计与范围说明）、issue 表单（bug / feature）与 PR 模板。
+
 ## [0.4.1] - 2026-09-30
 
 ### 新增

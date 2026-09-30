@@ -1,6 +1,6 @@
 # dsh-wallpaper-bg
 
-> v0.4.1 · MIT License
+> v0.4.2 · MIT License
 
 English | [中文](README.zh.md)
 
