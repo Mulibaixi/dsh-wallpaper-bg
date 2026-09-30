@@ -151,10 +151,13 @@ MIT License，见 [LICENSE](LICENSE)。欢迎 issue / PR。
 
 ```powershell
 .\scripts\release.ps1 -DryRun              # 先预演：只检查不产生改动
-.\scripts\release.ps1 -Version 0.4.1       # 改版本号并发布
+.\scripts\release.ps1 -Version 0.4.2       # 改版本号并发布
 .\scripts\release.ps1                      # 发布 package.json 里的当前版本
+.\scripts\release.ps1 -Resume              # 上次中断后续跑
 ```
 
 预检会拒绝重复发布（本地 / 远端已有标签、npm 上已有该版本），并校验 `CHANGELOG.md` 已写好对应版本条目——Release 说明直接取自该条目。另有 `-SkipNpm` / `-SkipGitHub` / `-SkipPush` / `-Yes` 可选。
+
+`npm publish` 成功后注册表要几分钟才可见（npm 自己会提示 "may take a few minutes"），所以脚本会轮询等待（`-NpmWaitSeconds`，默认 300 秒）而不是查一次就中断；等不到也只警告并继续发 GitHub Release，且 GitHub Release 这一步是幂等的（已存在就补传附件）。万一流程还是中断了，用 `-Resume` 续跑：它要求工作区干净、标签指向 HEAD，跳过已经成功的步骤（提交 / 打标签 / 推送 / 发布）只补剩下的。
 
 `legacy/` 目录存放 v0.1.0 之前的动态插件（Cordis dynamic package）时代源码，仅作归档。

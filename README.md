@@ -152,10 +152,13 @@ The repo ships a one-shot release script, `scripts/release.ps1`, which fixes the
 
 ```powershell
 .\scripts\release.ps1 -DryRun              # rehearse: checks only, no changes
-.\scripts\release.ps1 -Version 0.4.1       # bump version and release
+.\scripts\release.ps1 -Version 0.4.2       # bump version and release
 .\scripts\release.ps1                      # release the version in package.json
+.\scripts\release.ps1 -Resume              # finish a run that was interrupted mid-way
 ```
 
 Preflight refuses duplicate releases (tag already present locally or on the remote, version already on npm) and requires a matching `CHANGELOG.md` entry — the Release notes are taken from that entry. Optional flags: `-SkipNpm` / `-SkipGitHub` / `-SkipPush` / `-Yes`.
+
+npm needs a few minutes after `npm publish` before the new version is visible in the registry, so the script polls for it (`-NpmWaitSeconds`, default 300) instead of checking once and aborting; if it still cannot see the version it only warns and continues to the GitHub Release, which itself is idempotent (creates, or attaches the tarball to an existing release). If a run is interrupted anyway, `-Resume` finishes it: it requires a clean worktree, verifies the existing tag points at HEAD, then skips the steps that already succeeded (commit / tag / push / publish) and runs the rest.
 
 `legacy/` holds the pre-v0.1.0 dynamic-plugin (Cordis dynamic package) source, archived for reference only.
