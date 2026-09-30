@@ -1,4 +1,4 @@
-# 本地安装 dsh-wallpaper-bg（开发模式，junction 实时生效）
+﻿# 本地安装 dsh-wallpaper-bg（开发模式，junction 实时生效）
 # 用法：在仓库根目录执行  powershell -ExecutionPolicy Bypass -File .\install-local.ps1
 # 等价于：node .\bin\dsh-wallpaper-bg.js install
 #
