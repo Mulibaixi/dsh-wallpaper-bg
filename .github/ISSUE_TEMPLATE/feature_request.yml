@@ -1,0 +1,58 @@
+name: Feature request
+description: Suggest an idea or an improvement / 想要一个功能或改进
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Please describe the problem first — saying what you are trying to do often changes what the best solution looks like.
+        感谢建议！请先描述问题本身 —— 把「你想做什么」说清楚，方案往往会不一样。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do? / 你想解决什么问题
+      description: The workflow that doesn't work well today, and where it gets in the way. / 现在做起来别扭的地方，卡在哪里。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see? / 你希望是什么样
+      description: A concrete behaviour, setting or UI is easier to act on than a general direction. / 具体的表现、设置项或界面，比大方向更好落地。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered / 你考虑过的替代方案
+      description: Including "do nothing" — sometimes that is the right answer. / 包括「什么都不做」，有时那就是正确答案。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the project? / 涉及哪一块
+      options:
+        - Plugin UI and settings / 插件界面与设置
+        - Wallpaper sources (built-in, uploads, WE library) / 壁纸来源
+        - WE API service (wallpaper-engine-api/) / WE 服务
+        - Install, packaging, docs / 安装、打包、文档
+        - Not sure / 不确定
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting / 提交前
+      options:
+        - label: I searched the existing issues and this is not a duplicate / 我搜过现有 issue，不是重复问题
+          required: true
+        - label: I understand this is a spare-time project, so there is no timeline / 我理解这是业余项目，不承诺时间
+          required: false

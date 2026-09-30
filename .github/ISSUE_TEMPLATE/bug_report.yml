@@ -1,0 +1,95 @@
+name: Bug report
+description: Something is broken — the plugin, the settings panel, or the WE API service / 插件、设置面板或 WE 服务出问题了
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Environment details are usually what makes a bug reproducible — please fill in as much as you can.
+        感谢反馈！环境信息填得越全，问题越容易复现。
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version / 插件版本
+      description: "Shown on the DSH plugin page, by `dsh plugin list`, or in package.json. / 桌面端「设置 → 插件」里能看到，或用 `dsh plugin list`。"
+      placeholder: "0.4.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running DSH? / 你用哪种方式运行 DSH
+      options:
+        - DSH desktop app / 桌面端
+        - dsh web (CLI) / 命令行
+        - Not sure / 不确定
+    validations:
+      required: true
+
+  - type: dropdown
+    id: source
+    attributes:
+      label: Which wallpaper source is affected? / 哪个壁纸来源有问题
+      options:
+        - Built-in wallpapers / 内置壁纸
+        - Custom uploads / 自定义上传
+        - WE library / WE 壁纸库
+        - Not source-specific (UI, settings, install) / 与来源无关（界面、设置、安装）
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Node.js version / 系统与 Node 版本
+      description: "e.g. Windows 11 24H2 · Node 20.18.0 (`node -v`). Skip Node if you only use the desktop app. / 例如 Windows 11 24H2 · Node 20.18.0；只用桌面端可以不填 Node。"
+      placeholder: "Windows 11 24H2 · Node 20.18.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened? / 发生了什么
+      description: What you expected, and what actually happened. / 期望的结果与实际的结果。
+      placeholder: |
+        Expected / 期望：
+        Actual / 实际：
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: |
+        1. 打开 设置 → 壁纸
+        2. 选择来源「WE 壁纸库」
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: service
+    attributes:
+      label: WE API service output / WE 服务输出
+      description: |
+        Fill this in when the WE library source is involved: open http://127.0.0.1:8088/health in a browser, and paste what the 启动服务.bat console window (or we-api.log) shows.
+        涉及「WE 壁纸库」时请提供：浏览器打开 http://127.0.0.1:8088/health 的内容，以及 启动服务.bat 窗口（或 we-api.log）里的输出。
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting / 提交前
+      options:
+        - label: I searched the existing issues and this is not a duplicate / 我搜过现有 issue，不是重复问题
+          required: true
+        - label: This is not a security issue — those go through SECURITY.md / 这不是安全问题（安全问题走 SECURITY.md）
+          required: true
