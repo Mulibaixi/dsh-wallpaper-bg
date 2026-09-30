@@ -1,11 +1,16 @@
 # dsh-wallpaper-bg — profile bundle patch layer
 # ===============================================
 # 由 dsh.bundle.patch 声明，经 `dsh plugin --profile web add dsh-wallpaper-bg`
-# 安装后作为 profile 组合层之一被应用；也可以直接把下面的 insert 块放进
-# 你自己的 profiles/<name>/cordis.patch.yml（用户自有补丁层，支持热重载）。
+# （命令行部署）或桌面端「设置 → 插件」输入包名（0.2 桌面端，装进 desktop
+# profile）安装后作为 profile 组合层之一被应用；也可以直接把下面的 insert 块
+# 放进你自己的 profiles/<name>/cordis.patch.yml（用户自有补丁层，支持热重载）。
 #
-# 该行处于 host 平面：随 dsh web 启动即生效，页面首次加载就带壁纸背景，
-# 无需任何会话或预设。
+# 该行处于 host 平面：随 DSH 启动即生效（`dsh web` 或桌面端应用），页面首次
+# 加载就带壁纸背景，无需任何会话或预设。
+#
+# 注意：desktop profile 归 Electron 桌面端独占（终端 `dsh --profile desktop`
+# 会被拒绝），因此不要再往 profiles/desktop/cordis.patch.yml 里插这个 insert
+# ——插件已经通过 dsh.profile.bundles 加载，重复插行会挂载两次。
 - insert:
     - id: wallpaper-bg
       name: dsh-wallpaper-bg

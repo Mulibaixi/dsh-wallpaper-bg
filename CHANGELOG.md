@@ -2,6 +2,53 @@
 
 本文件记录 dsh-wallpaper-bg 的用户可见变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.1] - 2026-09-30
+
+### 新增
+
+- **DeepSeek Harness 0.2 桌面端安装支持（文档 + 安装器）**：桌面端自带插件管理页面，插件本身无需改动即可工作（本机 `0.2.0-rc.2` 桌面端实测：宿主半 `/dsh-wallpaper-bg/health` 返回 `{"ok":true,...}`，客户端「壁纸」设置页签正常注册）。本次补齐的是安装路径与说明：
+  - README 中英双语新增「桌面端安装（无需命令行）」：**设置 → 插件** 里输入包名 `dsh-wallpaper-bg` → 安装 → 按提示重启应用；等价命令 `dsh plugin --profile desktop add dsh-wallpaper-bg`（需先在应用内装上 `dsh` 命令）。
+  - 说明 `desktop` profile 由 Electron 应用独占管理：终端启动会被拒绝（`profile "desktop" is managed exclusively by the Electron application`），这是预期行为；`dsh plugin --profile desktop …` 仍可用。前提条件改为「桌面端自带 Node / pnpm，无需自装 Node.js；只有 `dsh web` 才需要 Node ≥ 20」。
+  - 验证方式按部署区分：`dsh web` 默认 `http://127.0.0.1:3080/dsh-wallpaper-bg/health`；桌面端固定 **19387**（`dsh-desktop-host` 启动 `desktop` profile 时写死 `--port 19387`，本机 0.2.0-rc.2 实测），即 `http://127.0.0.1:19387/dsh-wallpaper-bg/health`；界面里「设置 → 插件 / 设置 → 壁纸」同样能确认。端口固定也意味着页面 origin 稳定，自定义上传（IndexedDB）与各项设置（localStorage）在桌面端重启后保留。
+
+### 变更
+
+- **安装器 `bin/dsh-wallpaper-bg.js` 增加桌面端感知**（此前它会把插件行写进**每个** profile 的用户补丁层，包括 Electron 独占管理的 `desktop`——而桌面端已经通过 `dsh.profile.bundles` 加载插件，再插一行就会重复挂载）：
+  - `install` 跳过 `desktop` profile 并给出桌面端安装指引；已经作为插件包安装（`package.json` 的 `dsh.profile.bundles` / `dependencies` 里已有本包）的 profile 同样跳过并说明原因；全部跳过时以退出码 0 结束并说明是「已生效」还是「需在桌面端应用内安装」，不再误报失败。桌面端专属部署（连用户补丁层都没有）也只给指引，不报错。
+  - 新增 `--profile <name>`：只对指定 profile 生效（名字不存在时报错并列出可用 profile）。
+  - `ensurePatchFiles()` 不再往 `desktop` profile 创建模板补丁层；`uninstall` 不再触碰 `desktop` profile，并提示桌面端的卸载方式；`status` 逐 profile 报告状态（用户补丁层 / bundle 插件包 / 桌面端独占）并单列 desktop profile。
+  - `install-local.ps1` 与 `cordis.patch.yml` 顶部注释同步桌面端说明（并修正 install-local 里过时的「新建会话选择预设」提示）。
+- `package.json`：版本 0.4.1，描述补上「0.2 桌面端」，keywords 加 `desktop`（描述会显示在桌面端插件页面里）。
+
+## [0.4.0] - 2026-09-13
+
+### 移除（架构转折）
+
+- **砍掉本地场景渲染与烘焙整套方案**：不再解析 `scene.pkg`、不再渲染场景帧、不再烘焙循环视频。
+  - WE API 服务删除：`scene-frame.js` / `scene-anim.js` / `scene-video-frames.js`、`lib/we-renderer/`、`lib/pkg-extract.js`、`lib/scene-scripts.js` 等全部渲染器源码；`/scene-frame`、`/scene-anim` 端点一律 `404`。
+  - 删除 `WE_SCENE_RENDER` 开关（配置键 / 环境变量 / 启动向导写入全部移除）；`/health` 不再上报 `sceneRender` / `puppetAnim` / `sceneAnim` / `sceneFrameCache`。
+  - 不再创建 `~/.dsh-wallpaper-bg` 缓存目录；**已清理本机历史遗留的 847.9 MB 帧 / 视频缓存**。依赖 `@shaderfrog/glsl-parser` 一并移除。
+
+### 新增
+
+- **桌面壁纸实时镜像（新「同步桌面壁纸」底座，思路参考 GitHub 上的桌面同步方案）**：不去渲染、不去烘焙——Wallpaper Engine 本来就在桌面上用自己引擎（GPU）实时渲染当前壁纸，插件直接**采样那些像素**：
+  - WE API 服务新增 `GET /capture?w=&q=`：`PrintWindow(Progman, PW_RENDERFULLCONTENT)`（DWM 合成路径，含 WE 的 `WPEDesktopDX11Window` D3D 子窗口；新式独立 swapchain 合成下 GDI `BitBlt(CAPTUREBLT)` 只能拿到**全黑帧**，所以 PrintWindow 是主路径、BitBlt 仅作兜底）→ 主屏区域 `StretchBlt` 缩放 → 内存 JPEG，全程不落盘（`lib/desktop-capture.js`，koffi FFI + jpeg-js；实测 1280×720 约 100ms/帧）。黑帧经响应头 `X-Capture-Black: 1` 上报，客户端在状态行说明原因，不再默默黑屏。
+  - 「同步桌面壁纸」改为：复用单个 `<img>` 图层、每 ~1 秒向 `/capture` 换一帧（fetch + blob，便于读取黑帧 / 错误响应头）——场景的粒子 / 水面 / 角色呼吸等于是桌面实况，视频 / 网页 / 图片类桌面壁纸同样镜像。
+  - 场景壁纸手动选中 / 队列：显示 WE 自带的工坊预览图（`preview.gif` / `preview.jpg`），不再有任何帧渲染请求。
+  - `/health` 新增 `"desktopCapture": 1|0`（0 = 无交互桌面 / WE 未运行）；服务版本 0.4.0。
+- 插件 `lib/client.js` 移除全部烘焙控件 / 状态（`sceneAnim*` 状态、烘焙按钮、`WE_SCENE_RENDER` 提示），同步状态行改为镜像状态；依赖服务 0.4.0（旧版服务镜像会失败并在状态行给出提示）。
+
+## [0.3.13] - 2026-09-13
+
+### 新增
+
+- **桌面壁纸同步的场景化增强**：同步（只读跟随 WE 当前桌面壁纸）此前只能「桌面换到哪张、页面显示哪张」，场景类壁纸还只是一张静态帧，跟随状态也不可见。现在：
+  - **同步状态行**：WE 页签下显示正在跟随的壁纸标题与类型、上次同步时间；场景壁纸烘焙中还显示进度百分比，旁边是「立即刷新」按钮——不必等 30 秒轮询。
+  - **页面重新可见时立即再查一次**：切走 DSH 页签再切回来（`visibilitychange`）立刻跟随桌面最新壁纸，配合原有 30 秒轮询，日常「桌面换一张 → 页面对上」几乎无感。
+  - **同步桌面时自动烘焙**（新开关，默认开，与「选中时自动烘焙」独立）：桌面当前是未烘焙的场景壁纸时自动开始烘焙，完成后自动从静态帧叠化到循环动画——跟随桌面就是想看到会动的场景；不想让它吃 CPU 可关掉，手动选中仍走原来的「选中时自动烘焙」（默认关）。
+  - **场景渲染未开启时的明确指引**：同步到场景壁纸但服务端 `WE_SCENE_RENDER=0` 时，状态行直接写明「网页端暂显示工坊预览图」及开启方式（`we-api.config` 加一行 `WE_SCENE_RENDER=1` 并重启服务），不再让用户对着一张预览图猜原因。
+  - 以上均为插件侧改动（`lib/client.js`），无需升级 WE API 服务；场景渲染能力仍需服务端 `WE_SCENE_RENDER=1` 开启（见 0.3.12）。
+
 ## [0.3.12] - 2026-09-10
 
 ### 变更

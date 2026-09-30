@@ -95,9 +95,23 @@ async function main() {
     console.log('  [提示] current 为 null（WE 未设置壁纸或 config 无记录）')
   }
 
+  console.log('4) /capture 桌面壁纸捕获')
+  try {
+    const capRes = await fetch(base + '/capture?w=960')
+    check('捕获 200 且为 JPEG', capRes.status === 200 && capRes.headers.get('content-type') === 'image/jpeg')
+    const buf = Buffer.from(await capRes.arrayBuffer())
+    check('捕获帧非空（>5KB）', buf.length > 5000, (buf.length / 1024).toFixed(0) + 'KB')
+    check('缓存策略 no-store', (capRes.headers.get('cache-control') || '').includes('no-store'))
+  } catch (err) {
+    check('/capture 可用', false, String((err && err.message) || err))
+  }
+
   console.log('')
   console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败')
-  process.exit(fail ? 1 : 0)
+  // 用自然退出（exitCode 赋值）而不是 process.exit()：显式退出会和 undici
+  // fetch 的 keep-alive 连接在 libuv 收尾时竞争，触发 Windows 上的
+  // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" 崩溃。
+  process.exitCode = fail ? 1 : 0
 }
 
 main().catch((err) => {

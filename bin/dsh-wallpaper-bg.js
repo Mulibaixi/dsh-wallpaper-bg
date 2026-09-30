@@ -8,8 +8,15 @@
  * （用户自有补丁层），随 dsh web 启动即生效——首次加载页面就带壁纸背景，
  * 无需会话、无需预设、无需重启（该层支持热重载，写完后刷新页面即可）。
  *
+ * 桌面端（DeepSeek Harness 0.2 桌面版）例外：`desktop` profile 由 Electron 应用
+ * 独占管理（终端里 `dsh --profile desktop` 会被拒绝），插件应当在应用内
+ * 「设置 → 插件」里按包名安装（等价：`dsh plugin --profile desktop add
+ * dsh-wallpaper-bg`）——那样插件是通过 package.json 的 dsh.profile.bundles
+ * 组合层加载的，本 CLI 不会再往该 profile 的用户补丁层插行（插了就会重复）。
+ *
  * 用法：
  *   dsh-wallpaper-bg install                默认：profile 补丁层（启动即生效）
+ *   dsh-wallpaper-bg install --profile web  只对指定 profile 生效
  *   dsh-wallpaper-bg install --preset       改为预设行模式（按会话挂载）
  *   dsh-wallpaper-bg install --id my-preset --name "我的壁纸" --we-base <url>
  *   dsh-wallpaper-bg status
@@ -31,7 +38,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 
@@ -39,6 +46,10 @@ const PATCH_MARKER = '# dsh-wallpaper-bg（managed-by: dsh-wallpaper-bg）'
 const DEFAULT_ID = 'standard-wallpaper'
 const DEFAULT_NAME = '壁纸背景 (standard)'
 const DEFAULT_WE_BASE = 'http://127.0.0.1:8088'
+/** npm 包名：bundle 组合层与桌面端插件管理页面都按它识别本插件 */
+const PACKAGE_NAME = 'dsh-wallpaper-bg'
+/** Electron 桌面端（0.2+）独占管理的 profile 名 */
+const DESKTOP_PROFILE = 'desktop'
 const PATCH_TEMPLATE = [
   '# Your patch layer for this dsh profile, applied after every bundle layer:',
   '# a top-level YAML array of loader patch entries (id-targeted config',
@@ -134,10 +145,48 @@ function profileDirs() {
   return dirs
 }
 
+/** 各 profile 的名字（用于报错提示） */
+function profileNames() {
+  return profileDirs().map((dir) => basename(dir)).join(', ')
+}
+
+/** 读 profile 的 package.json；读不到或不是 JSON 都返回 null */
+function profileManifest(dir) {
+  try {
+    return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 该 profile 是否已经以「插件包」形态加载本插件——`dsh plugin --profile <name> add`
+ * 与桌面端「设置 → 插件」都是这么装的：包进了 dependencies，DSH 自己再把它追加进
+ * `dsh.profile.bundles`，插件随应用启动生效。此时本 CLI 不该再往该 profile 的
+ * 用户补丁层插一行，否则同一个插件会被挂载两次。
+ */
+function installedAsPackage(dir) {
+  const manifest = profileManifest(dir)
+  if (!manifest) return false
+  const bundles = manifest.dsh?.profile?.bundles
+  if (Array.isArray(bundles) && bundles.includes(PACKAGE_NAME)) return true
+  return Object.keys(manifest.dependencies ?? {}).includes(PACKAGE_NAME)
+}
+
+/** 桌面端 profile 的固定说明（安装 / 卸载 / 状态三处共用） */
+function desktopNote() {
+  return (
+    'Electron 桌面端独占管理该 profile（终端里 `dsh --profile desktop` 会被拒绝），' +
+    '插件请在应用内「设置 → 插件」输入包名 ' + PACKAGE_NAME + ' 安装，' +
+    '等价命令：dsh plugin --profile ' + DESKTOP_PROFILE + ' add ' + PACKAGE_NAME
+  )
+}
+
 /** 为还没有补丁层的 profile 目录创建模板补丁文件（与 DSH initProfile 的模板一致） */
 function ensurePatchFiles() {
   const created = []
   for (const dir of profileDirs()) {
+    if (basename(dir) === DESKTOP_PROFILE) continue // 桌面端 profile 不代管
     const p = join(dir, 'cordis.patch.yml')
     try {
       if (!existsSync(p)) {
@@ -477,6 +526,7 @@ function parseArgs(argv) {
     if (a === '--id') args.id = argv[++i]
     else if (a === '--name') args.name = argv[++i]
     else if (a === '--we-base') args.weBase = argv[++i]
+    else if (a === '--profile') args.profile = argv[++i]
     else if (a === '--preset') args.preset = true
     else args._.push(a)
   }
@@ -494,11 +544,26 @@ function printStatus() {
   const patches = profilePatchPaths()
   if (patches.length) {
     for (const p of patches) {
+      const dir = dirname(p)
+      const name = basename(dir)
       const ps = patchState(p)
-      lines.push('patch layer ' + p + ': ' + (ps.row ? 'installed' : 'absent'))
+      let state
+      if (ps.row) state = 'installed（用户补丁层）'
+      else if (name === DESKTOP_PROFILE) state = '桌面端独占管理（请用应用内「设置 → 插件」）'
+      else if (installedAsPackage(dir)) state = 'installed（bundle / 插件管理页面）'
+      else state = 'absent'
+      lines.push('patch layer ' + p + ': ' + state)
     }
   } else {
     lines.push('patch layer: no profiles/*/cordis.patch.yml found')
+  }
+  const desktopDir = join(dshHome, 'profiles', DESKTOP_PROFILE)
+  if (existsSync(desktopDir)) {
+    lines.push(
+      'desktop profile: ' +
+        (installedAsPackage(desktopDir) ? 'installed（bundle 层，应用启动即生效）' : '未安装本插件') +
+        ' — 由 Electron 桌面端独占管理',
+    )
   }
   const pr = presetState(DEFAULT_ID)
   lines.push(
@@ -507,6 +572,7 @@ function printStatus() {
   )
   lines.push('')
   lines.push('安装：dsh-wallpaper-bg install（默认 profile 补丁层，启动即生效；--preset 为按会话模式）')
+  lines.push('      桌面端请在应用内「设置 → 插件」输入 ' + PACKAGE_NAME + '（终端无法启动 desktop profile）')
   lines.push('卸载：dsh-wallpaper-bg uninstall [--preset]')
   return lines.join('\n')
 }
@@ -521,6 +587,7 @@ function main() {
         '',
         '用法:',
         '  dsh-wallpaper-bg install              默认：写入 profile 补丁层（启动即生效，热重载）',
+        '  dsh-wallpaper-bg install --profile web 只对指定 profile 生效',
         '  dsh-wallpaper-bg install --preset     预设行模式（按会话挂载）',
         '  dsh-wallpaper-bg install --we-base <url>',
         '  dsh-wallpaper-bg status               查看状态',
@@ -529,6 +596,10 @@ function main() {
         '默认 install 会：确认插件包可从 harness 锚点解析（必要时在 %DSH_HOME%\\node_modules',
         '建链接），再把插件行写进 profiles/<name>/cordis.patch.yml。dsh web 启动即生效，',
         '首次加载页面就带壁纸背景，无需会话、预设或重启（该层支持热重载，写完后刷新页面即可）。',
+        '',
+        '桌面端（DeepSeek Harness 0.2+ 桌面版）：desktop profile 由 Electron 应用独占管理，',
+        'install 会跳过它并提示——请在应用内「设置 → 插件」输入包名 dsh-wallpaper-bg，',
+        '或运行 dsh plugin --profile desktop add dsh-wallpaper-bg。',
       ].join('\n'),
     )
     return
@@ -563,17 +634,53 @@ function main() {
     }
 
     const weBase = args.weBase || DEFAULT_WE_BASE
+    const wanted = args.profile ? String(args.profile) : null
     for (const p of ensurePatchFiles()) {
       console.log('[patch] created template layer at ' + p)
     }
-    const paths = profilePatchPaths()
+    let paths = profilePatchPaths()
+    if (wanted) {
+      paths = paths.filter((p) => basename(dirname(p)) === wanted)
+      if (!paths.length) {
+        console.error(
+          'ERROR: 没有 profiles/' + wanted + '/cordis.patch.yml（可用 profile：' + profileNames() + '）',
+        )
+        process.exitCode = 1
+        return
+      }
+    }
     if (!paths.length) {
+      // 桌面端专属部署可能没有任何用户补丁层（desktop profile 归应用管理）
+      const desktopDir = join(dshHome, 'profiles', DESKTOP_PROFILE)
+      if (existsSync(desktopDir)) {
+        console.log('[skip] desktop: ' + desktopNote())
+        console.log('')
+        console.log('没有需要改动的 profile：桌面端请在应用内安装（见上文提示）。')
+        return
+      }
       console.error('ERROR: 找不到 profiles/*/cordis.patch.yml；本部署可能没有 profile 补丁层，请改用 --preset 模式')
       process.exitCode = 1
       return
     }
     let anyOk = false
+    let skipped = 0
+    let touchedDesktop = false
     for (const p of paths) {
+      const name = basename(dirname(p))
+      if (name === DESKTOP_PROFILE) {
+        touchedDesktop = true
+        skipped++
+        console.log('[skip] desktop: ' + desktopNote())
+        continue
+      }
+      if (!patchState(p).row && installedAsPackage(dirname(p))) {
+        skipped++
+        console.log(
+          '[skip] ' + name + ': 已作为插件包安装（package.json 的 dsh.profile.bundles 里已有 ' +
+            PACKAGE_NAME + '），无需再写用户补丁层',
+        )
+        continue
+      }
       const res = writePatch(p, weBase)
       if (res.ok) {
         anyOk = true
@@ -583,6 +690,16 @@ function main() {
       }
     }
     if (!anyOk) {
+      if (skipped) {
+        console.log('')
+        console.log(
+          touchedDesktop && !installedAsPackage(join(dshHome, 'profiles', DESKTOP_PROFILE))
+            ? '没有改动任何 profile：桌面端请在应用内安装（见上文提示）。'
+            : '没有需要改动的 profile：本插件已在该部署里生效。',
+        )
+        if (touchedDesktop) console.log('  桌面端：' + desktopNote())
+        return
+      }
       process.exitCode = 1
       return
     }
@@ -590,6 +707,7 @@ function main() {
     console.log('安装完成（启动即生效模式）。')
     console.log('  - 当前正在运行的 dsh web 会热加载该补丁层：刷新页面即可看到壁纸背景')
     console.log('  - 之后每次 dsh web 启动，首次加载页面就带壁纸背景，无需会话或预设')
+    if (touchedDesktop) console.log('  - 桌面端：' + desktopNote())
     console.log('')
     console.log('（可选）WE 壁纸库：进入仓库 wallpaper-engine-api 目录执行 npm install，再运行 启动服务.bat')
     return
@@ -611,6 +729,18 @@ function main() {
         return
       }
       for (const p of paths) {
+        const name = basename(dirname(p))
+        if (name === DESKTOP_PROFILE) {
+          console.log('[skip] desktop: ' + desktopNote())
+          continue
+        }
+        if (!patchState(p).row && installedAsPackage(dirname(p))) {
+          console.log(
+            '[skip] ' + name + ': 由插件包（bundle 层）提供，请用 dsh plugin --profile ' +
+              name + ' remove ' + PACKAGE_NAME + ' 卸载',
+          )
+          continue
+        }
         const res = removePatch(p)
         if (res.ok) console.log('[patch] ' + res.note)
         else console.error('ERROR: ' + res.note)
@@ -619,9 +749,9 @@ function main() {
     const link = removeLink()
     if (link.ok) console.log('[link] ' + link.note)
     else console.error('WARN: ' + link.note)
-    console.log(
-      '若插件还通过 dsh plugin --profile web add 安装过，请再执行：dsh plugin --profile web remove dsh-wallpaper-bg',
-    )
+    console.log('若插件是通过 dsh plugin add / 桌面端插件页面安装的，请再执行：')
+    console.log('  dsh plugin --profile web remove ' + PACKAGE_NAME)
+    console.log('  dsh plugin --profile ' + DESKTOP_PROFILE + ' remove ' + PACKAGE_NAME + '   # 或在桌面端「设置 → 插件」里卸载')
     return
   }
   console.error('unknown command: ' + cmd + '（可用：install / status / uninstall / help）')

@@ -4,15 +4,13 @@
  * 为 dsh-wallpaper-bg 插件提供 Wallpaper Engine 壁纸库的只读 HTTP API。
  *
  * 端点（全部只读 GET，仅绑定 127.0.0.1）：
- *   GET /health、/            → 服务状态（含 webShim / sceneRender 能力标记）
+ *   GET /health、/            → 服务状态（含 webShim / desktopCapture 能力标记）
  *   GET /api/wallpapers       → 已安装壁纸列表（含 /wallpapers 等别名）
  *   GET /api/current          → 当前桌面壁纸（含 /current 等别名）
  *   GET /files/<id>/<rel>     → Web 类壁纸的目录文件（index.html 及其相对资源，
  *                               仅限已订阅壁纸目录内，供插件 iframe 原生渲染；
  *                               HTML 文档注入 WE 私有接口垫片，支持 ETag / Range）
- *   GET /scene-frame/<id>     → 场景壁纸完整帧 PNG（纯 JS 场景渲染器，worker 线程
- *                               + 磁盘缓存；失败回退主纹理静态帧，再失败 422）
- *                               **默认关闭**：WE_SCENE_RENDER=1 才启用，关闭时 403
+ *   GET /capture?w=&q=        → 桌面壁纸实时捕获（JPEG，内存中生成，不落盘）
  *
  * 隔离原则：
  *   - 只调用 wallpaper-engine-api 的 listWallpapers() / wallpaper().current()，
@@ -20,11 +18,16 @@
  *   - 调用 current() 前先用 tasklist 确认 WE 正在运行，未运行直接返回 null，
  *     避免 -control 命令意外拉起 Wallpaper Engine 主程序。
  *
- * 场景渲染总开关（WE_SCENE_RENDER，默认关）：
- *   场景帧渲染与动画烘焙会把渲染结果缓存到用户主目录（`~/.dsh-wallpaper-bg`）。
- *   本服务默认**不启用**该能力：启动、/health、/scene-frame、/scene-anim 都不会
- *   创建该目录，场景壁纸由插件端回退到工坊预览图。需要完整场景帧 / 烘焙动画时，
- *   在 we-api.config 或环境变量里设置 WE_SCENE_RENDER=1 再重启服务。
+ * 桌面壁纸同步（/capture）：
+ *   不去解析 scene.pkg、不本地渲染、不烘焙视频、不产生任何缓存文件——Wallpaper
+ *   Engine 已经在桌面上用自己的引擎（GPU）实时渲染当前壁纸（场景的粒子 / 着色器 /
+ *   骨骼动画都在动），这里只对桌面壁纸层做一次 DWM 采样并就地编码 JPEG 返回：
+ *   PrintWindow(Progman, PW_RENDERFULLCONTENT)（DWM 合成路径，含 WE 的
+ *   WPEDesktopDX11Window 子窗口；新式独立 swapchain 下 GDI BitBlt 会拿到黑帧，
+ *   PrintWindow 才可靠，失败时回退 BitBlt）
+ *   → 主屏区域 StretchBlt 缩放 → GetDIBits → jpeg-js。全程内存内完成，
+ *   黑帧由 X-Capture-Black 上报（客户端据此提示而不是默默黑屏）。
+ *   实现见 lib/desktop-capture.js（需要 koffi / jpeg-js，随 npm install 安装）。
  *
  * 订阅过滤：列表按 Steam UGC 订阅清单（userdata/<id>/ugc/431960_subscriptions.vdf）
  * 过滤，已退订 / 本地禁用但文件夹仍残留的壁纸不会出现在列表里，与 WE 界面一致；
@@ -38,7 +41,6 @@
  *   WEAPI_PORT        端口，默认 8088（8080 被 Jenkins 占用）
  *   WE_INSTALL_PATH   WE 安装目录（含 wallpaper64.exe / wallpaper32.exe）
  *   WE_WORKSHOP_PATH  创意工坊壁纸库目录（...\steamapps\workshop\content\431960）
- *   WE_SCENE_RENDER   场景帧渲染 / 动画烘焙开关，默认 0（关）；1 / true / on 开启
  */
 
 'use strict'
@@ -47,12 +49,10 @@ const http = require('http')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
-const { createReadStream } = fs
 const { execFile } = require('child_process')
+const { createReadStream } = fs
 const { WallpaperEngineApi } = require('wallpaper-engine-api')
-const { renderSceneFrame, cacheDir: sceneFrameCacheDir, sceneAspect, DEFAULT_WIDTH: SCENE_FRAME_WIDTH } =
-  require('./scene-frame.js')
-const sceneAnim = require('./scene-anim.js')
+const { captureJpeg, probe: probeCapture } = require('./lib/desktop-capture.js')
 
 const PORT = Number(process.env.WEAPI_PORT || 8088)
 const HOST = '127.0.0.1'
@@ -121,20 +121,6 @@ function deriveWorkshopPath(installPath) {
 }
 
 const cfgFile = readConfigFile()
-
-// ---------------------------------------------------------------------------
-// 场景渲染总开关（默认关）
-// ---------------------------------------------------------------------------
-// 场景帧渲染 / 动画烘焙会把结果缓存到 ~/.dsh-wallpaper-bg，对只装壁纸插件的
-// 用户默认不应产生该目录 → 默认关闭：WE_SCENE_RENDER=1（环境变量或 we-api.config）
-// 才启用。下面把配置文件里的开关合并进环境变量，让 scene-frame.js / scene-anim.js
-// 的 sceneRenderEnabled() 与这里读到同一个值。
-const SCENE_RENDER_CFG = String(cfgFile.WE_SCENE_RENDER ?? '').trim().toLowerCase()
-const SCENE_RENDER_ENV = String(process.env.WE_SCENE_RENDER ?? '').trim().toLowerCase()
-const SCENE_RENDER_ENABLED = ['1', 'true', 'on', 'yes'].includes(SCENE_RENDER_ENV || SCENE_RENDER_CFG)
-if (SCENE_RENDER_ENABLED && !process.env.WE_SCENE_RENDER) {
-  process.env.WE_SCENE_RENDER = SCENE_RENDER_CFG
-}
 
 let WE_INSTALL_PATH =
   process.env.WE_INSTALL_PATH ||
@@ -302,10 +288,8 @@ function enrich(w) {
   if (fs.existsSync(gifPath)) previewFile = gifPath
   else if (pj && typeof pj.preview === 'string' && pj.preview) previewFile = path.join(dir, pj.preview)
   else if (typeof w.preview === 'string' && w.preview) previewFile = w.preview
-  // 场景壁纸：存在 scene.pkg / scene.json 时可由 /scene-frame/<id> 渲染完整场景帧
-  // （插件端据此优先用渲染帧，失败再回退 preview.gif/jpg —— 这里只声明能力，不触发渲染）
-  const hasFrame = type === 'scene' &&
-    (fs.existsSync(path.join(dir, 'scene.pkg')) || fs.existsSync(path.join(dir, 'scene.json')))
+  // 场景壁纸：不再本地渲染（scene.pkg 由 WE 自己在桌面渲染，插件端经 /capture 同步），
+  // 这里只声明工坊预览图（preview.gif / preview.jpg）作为手动点选时的展示来源。
   return {
     id: String(w.id),
     title: typeof w.title === 'string' && w.title ? w.title : '未命名壁纸',
@@ -315,7 +299,6 @@ function enrich(w) {
     thumbnail,
     previewUrl: '',
     previewFile,
-    hasFrame,
     tags: Array.isArray(w.tags) ? w.tags : [],
     description: typeof w.description === 'string' ? w.description : '',
     rating,
@@ -426,12 +409,11 @@ async function getCurrent() {
       entry: pj && typeof pj.file === 'string' ? pj.file : '',
       thumbnail,
       previewUrl: '',
-      // 与 enrich() 一致：声明场景帧渲染能力与工坊预览图（绝对路径）
+      // 与 enrich() 一致：工坊预览图（绝对路径，preview.gif / preview.jpg），
+      // 场景壁纸由插件端经 /capture 同步桌面实时画面，不再本地渲染
       previewFile: fs.existsSync(gifPath)
         ? gifPath
         : (pj && typeof pj.preview === 'string' && pj.preview ? path.join(dir, pj.preview) : ''),
-      hasFrame: type === 'scene' &&
-        (fs.existsSync(path.join(dir, 'scene.pkg')) || fs.existsSync(path.join(dir, 'scene.json'))),
       tags: pj && Array.isArray(pj.tags) ? pj.tags : [],
       description: pj && typeof pj.description === 'string' ? pj.description : '',
       rating,
@@ -744,200 +726,45 @@ function refererWorkshopId(req) {
 // ---------------------------------------------------------------------------
 
 /**
- * 解析场景壁纸的渲染源：workshop/<id>/scene.pkg 优先，其次松散 scene.json 目录。
- * 只允许纯数字 ID，且必须落在 WE_WORKSHOP_PATH 内（只读、不越界）。
- * @returns {string|null} 可直接交给 SceneRenderer 的路径
+ * GET /capture?w=&q=
+ * 桌面壁纸实时捕获（JPEG，单帧，内存生成，不落盘）。
+ * 就是「同步桌面壁纸」的核心：不本地渲染、不烘焙——直接采样 Wallpaper Engine
+ * 正在桌面上实时渲染的画面（PrintWindow(Progman, PW_RENDERFULLCONTENT)，含 WE
+ * D3D 子窗口；DWM 合成下 GDI BitBlt 拿不到时 PrintWindow 才行，失败回退 BitBlt）。
+ * 插件端在同步 / 桌面镜像场景下以约 1 秒间隔轮询此端点即可看到会动的桌面壁纸。
  */
-function resolveSceneSource(id) {
-  if (!/^\d{1,20}$/.test(String(id || ''))) return null
-  const dir = path.join(WE_WORKSHOP_PATH, String(id))
-  const pkg = path.join(dir, 'scene.pkg')
-  if (fs.existsSync(pkg)) return pkg
-  const json = path.join(dir, 'scene.json')
-  if (fs.existsSync(json)) return dir
-  return null
-}
-
-/**
- * GET /scene-frame/<id>?w=&h=&t=&refresh=1
- * 场景壁纸完整帧（对象树 / 纹理 / 骨骼 / 粒子 / shader 效果），PNG。
- * 渲染在 worker 线程完成并落盘缓存；失败时回退主纹理静态帧，
- * 接口层面只在两者都失败时才返回 422（插件端再回退 preview.gif）。
- * 客户端断开（切壁纸）时通过 AbortSignal 终止 worker，不浪费 CPU。
- */
-async function serveSceneFrame(req, res, url, pathname) {
-  // 场景渲染总开关（默认关）：关闭时不解析源、不建缓存目录，直接 403，
-  // 插件端收到后回退工坊预览图（preview.gif / preview.jpg）。
-  if (!SCENE_RENDER_ENABLED) {
-    return sendJson(res, 403, {
-      ok: false,
-      error: '场景渲染未启用（默认关）：在 we-api.config 或环境变量设置 WE_SCENE_RENDER=1 后重启服务',
-    })
-  }
-  const id = pathname.slice('/scene-frame/'.length).replace(/\/+$/, '')
-  const src = resolveSceneSource(id)
-  if (!src) return sendJson(res, 404, { ok: false, error: '场景壁纸不存在: ' + id })
-
-  const controller = new AbortController()
-  // 客户端提前断开（切换壁纸）→ 终止渲染
-  res.on('close', () => {
-    if (!res.writableEnded) controller.abort()
-  })
-
-  const num = (name, fallback, lo, hi) => {
-    const raw = url.searchParams.get(name)
-    if (raw === null || raw === '') return fallback
-    const v = Number(raw)
-    return Number.isFinite(v) && v >= lo && v <= hi ? v : fallback
-  }
-
-  const t0 = Date.now()
-  let result
+function serveCapture(req, res, url) {
+  const w = Number(url.searchParams.get('w'))
+  const q = Number(url.searchParams.get('q'))
   try {
-    result = await renderSceneFrame(src, {
-      width: num('w', SCENE_FRAME_WIDTH, 64, 7680),
-      height: num('h', 0, 0, 7680),
-      time: num('t', undefined, 0, 3600),
-      refresh: url.searchParams.get('refresh') === '1',
-      // auto=0 → 严格用 t（不做「避开眨眼闭眼相位」的静态帧时刻选择）
-      autoTime: url.searchParams.get('auto') !== '0',
-      weAssetsDir: WE_INSTALL_PATH,
-      signal: controller.signal,
+    const frame = captureJpeg({
+      width: Number.isFinite(w) && w >= 160 && w <= 3840 ? w : 1280,
+      quality: Number.isFinite(q) && q >= 30 && q <= 95 ? q : 70,
     })
-  } catch (err) {
-    return sendJson(res, 500, { ok: false, error: String((err && err.message) || err) })
-  }
-  if (controller.signal.aborted) {
-    try { res.destroy() } catch { /* 已断开 */ }
-    return undefined
-  }
-  if (!result || !result.ok) {
-    return sendJson(res, 422, { ok: false, error: (result && result.error) || '场景帧渲染失败' })
-  }
-  const headers = {
-    'Content-Type': result.mime || 'image/png',
-    'Content-Length': String(result.png.length),
-    'Cache-Control': 'public, max-age=86400',
-    'Access-Control-Allow-Origin': '*',
-    // 插件可据此显示来源：scene = 完整场景渲染，main-texture = 主纹理回退
-    'X-Scene-Mode': result.mode || 'scene',
-    'X-Scene-Cached': result.cached ? '1' : '0',
-    'X-Scene-Render-Ms': String(Date.now() - t0),
-  }
-  if (Number.isFinite(result.stillTime)) headers['X-Scene-Still-Time'] = result.stillTime.toFixed(2)
-  if (req.method === 'HEAD') {
-    res.writeHead(200, headers)
-    return res.end()
-  }
-  res.writeHead(200, headers)
-  return res.end(result.png)
-}
-
-/**
- * GET /scene-anim/<id>?w=&h=&fps=&dur=&bake=1&refresh=1&cancel=1   → 烘焙状态 JSON
- * GET /scene-anim/<id>/video.mp4?w=&h=&fps=&dur=                    → 烘焙好的循环视频
- * GET /scene-anim/status                                            → 全部任务
- *
- * 场景壁纸动画烘焙：把场景渲染成一段可循环的 MP4（多帧渲染 + ffmpeg 编码），
- * 浏览器用原生 <video loop> 播放——粒子、水面、角色呼吸/眨眼都能动。
- * 烘焙是重任务（普通场景 1080p 1~2 分钟，重效果场景 5~25 分钟），因此接口是
- * **异步**的：`bake=1` 入队并立即返回状态，客户端轮询看进度，完成后取 video.mp4。
- */
-async function serveSceneAnim(req, res, url, pathname) {
-  // 场景渲染总开关（默认关）：关闭时烘焙 / 状态 / 视频一律 403，且不建缓存目录
-  if (!SCENE_RENDER_ENABLED) {
-    return sendJson(res, 403, {
-      ok: false,
-      error: '场景渲染未启用（默认关）：在 we-api.config 或环境变量设置 WE_SCENE_RENDER=1 后重启服务',
-    })
-  }
-  const rest = pathname.slice('/scene-anim/'.length).replace(/\/+$/, '')
-  const m = /^(\d{1,20})(?:\/(video\.mp4))?$/.exec(rest)
-  if (!m) return sendJson(res, 404, { ok: false, error: '非法路径: ' + rest })
-  const id = m[1]
-  const src = resolveSceneSource(id)
-  if (!src) return sendJson(res, 404, { ok: false, error: '场景壁纸不存在: ' + id })
-
-  const num = (name, fallback, lo, hi) => {
-    const raw = url.searchParams.get(name)
-    if (raw === null || raw === '') return fallback
-    const v = Number(raw)
-    return Number.isFinite(v) && v >= lo && v <= hi ? v : fallback
-  }
-  const width = Math.round(num('w', sceneAnim.DEFAULT_WIDTH, 320, 3840) / 2) * 2
-  let height = Math.round(num('h', 0, 0, 2160) / 2) * 2
-  if (!height) {
-    const ar = await sceneAspect(src)
-    height = Math.max(64, Math.round(width / (ar || (16 / 9)) / 2) * 2)
-  }
-  const opts = {
-    width,
-    height,
-    fps: num('fps', sceneAnim.DEFAULT_FPS, 8, 60),
-    duration: num('dur', sceneAnim.DEFAULT_DURATION, 1, 12),
-    weAssetsDir: WE_INSTALL_PATH,
-  }
-
-  // 视频文件（浏览器 <video> 直接播）
-  if (m[2]) {
-    const baked = sceneAnim.getBaked(src, opts)
-    if (!baked) return sendJson(res, 404, { ok: false, error: '尚未烘焙: ' + id })
-    let st
-    try { st = fs.statSync(baked.file) } catch { return sendJson(res, 404, { ok: false, error: '视频文件丢失' }) }
-    const etag = '"' + st.size.toString(16) + '-' + Math.round(st.mtimeMs).toString(16) + '"'
     const headers = {
-      'Content-Type': 'video/mp4',
-      'Accept-Ranges': 'bytes',
-      // no-cache + ETag：重新烘焙后同一 URL 也能立即生效
-      'Cache-Control': 'no-cache',
-      ETag: etag,
+      'Content-Type': 'image/jpeg',
+      'Content-Length': String(frame.data.length),
+      'Cache-Control': 'no-store',
       'Access-Control-Allow-Origin': '*',
+      'X-Capture-W': String(frame.width),
+      'X-Capture-H': String(frame.height),
+      'X-Capture-Ms': String(Date.now() - frame.capturedAt),
+      // 1 = 本帧判定为纯黑（WE 暂停渲染 / 桌面被遮盖），客户端据此提示而不是默默黑屏
+      'X-Capture-Black': frame.black ? '1' : '0',
     }
-    if (req.headers['if-none-match'] === etag) {
-      res.writeHead(304, headers)
+    if (req.method === 'HEAD') {
+      res.writeHead(200, headers)
       return res.end()
     }
-    let start = 0
-    let end = st.size - 1
-    let code = 200
-    const range = req.headers.range
-    if (typeof range === 'string') {
-      const rm = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
-      if (rm) {
-        let s = rm[1] ? parseInt(rm[1], 10) : 0
-        let e = rm[2] ? parseInt(rm[2], 10) : st.size - 1
-        if (Number.isNaN(s)) s = 0
-        if (Number.isNaN(e)) e = st.size - 1
-        if (s > e || s >= st.size) {
-          res.writeHead(416, { 'Content-Range': 'bytes */' + st.size })
-          return res.end()
-        }
-        start = s
-        end = Math.min(e, st.size - 1)
-        code = 206
-      }
-    }
-    headers['Content-Length'] = String(end - start + 1)
-    if (code === 206) headers['Content-Range'] = 'bytes ' + start + '-' + end + '/' + st.size
-    if (baked.meta) headers['X-Scene-Anim-Frames'] = String(baked.meta.frames || '')
-    res.writeHead(code, headers)
-    if (req.method === 'HEAD') return res.end()
-    const stream = createReadStream(baked.file, { start, end })
-    stream.on('error', () => { try { res.destroy() } catch { /* 已断开 */ } })
-    stream.pipe(res)
-    return undefined
+    res.writeHead(200, headers)
+    return res.end(frame.data)
+  } catch (err) {
+    return sendJson(res, 503, {
+      ok: false,
+      error: '桌面壁纸捕获失败: ' + String((err && err.message) || err),
+      hint: '需要运行中的 Wallpaper Engine 与可用的交互桌面（Progman 窗口）',
+    })
   }
-
-  if (url.searchParams.get('cancel') === '1') {
-    const cancelled = sceneAnim.cancelBake(src, opts)
-    return sendJson(res, 200, { ok: true, id, cancelled })
-  }
-  if (url.searchParams.get('bake') === '1') {
-    const status = sceneAnim.enqueueBake(src, Object.assign({}, opts, { refresh: url.searchParams.get('refresh') === '1' }))
-    return sendJson(res, 202, Object.assign({ ok: true, id, src: undefined }, status))
-  }
-  const status = sceneAnim.bakeStatus(src, opts)
-  return sendJson(res, 200, Object.assign({ ok: true, id }, status))
 }
 
 function sendJson(res, code, obj) {
@@ -963,22 +790,18 @@ const server = http.createServer(async (req, res) => {
   try {
     if (p === '/' || p === '/health' || p === '/api/health') {
       const subFiles = findSubscriptionsFiles()
+      const cap = probeCapture()
       return sendJson(res, 200, {
         ok: true,
         service: 'we-api-proxy',
-        version: '0.3.1',
+        version: '0.4.0',
         // 网页壁纸兼容垫片版本：插件可据此判断服务是否需要升级（0 = 旧版，无垫片）
         webShim: 1,
-        // 场景壁纸完整帧渲染：1 = 支持 /scene-frame（插件据此决定是否用渲染帧替代 preview.gif）
-        // 默认关（0）：场景渲染会把结果缓存到 ~/.dsh-wallpaper-bg，需显式 WE_SCENE_RENDER=1
-        sceneRender: SCENE_RENDER_ENABLED ? 1 : 0,
-        // 骨骼动画完整度：2 = MDLA 全帧率解析 + 动画缩放 + 静态帧时刻选择（旧版角色眼睛会闭/错位）
-        // 未启用场景渲染时为 0（不宣称该能力）
-        puppetAnim: SCENE_RENDER_ENABLED ? 2 : 0,
-        // 场景壁纸动画烘焙：1 = 支持 /scene-anim（把场景渲染成可循环 MP4，客户端用 <video> 播）
-        sceneAnim: SCENE_RENDER_ENABLED ? 1 : 0,
-        // 场景帧缓存目录：仅在启用场景渲染时给出（关闭时不创建、不报告该目录）
-        sceneFrameCache: SCENE_RENDER_ENABLED ? sceneFrameCacheDir() : null,
+        // 桌面壁纸实时捕获：1 = /capture 可用（插件「同步桌面壁纸」据此镜像桌面；
+        // 不依赖任何本地渲染 / 缓存，纯捕获 WE 在桌面上实时渲染的画面）
+        desktopCapture: cap.desktopCapture,
+        captureError: cap.captureError,
+        primary: cap.primary,
         mode: 'readonly',
         weInstallPath: WE_INSTALL_PATH,
         workshopPath: WE_WORKSHOP_PATH,
@@ -998,9 +821,6 @@ const server = http.createServer(async (req, res) => {
         wallpapers: items,
         count: items.length,
         hiddenUnsubscribed: hidden,
-        // 场景渲染能力位：插件据此决定场景壁纸是走 /scene-frame 还是直接用工坊预览图。
-        // 默认关（0）——场景渲染会把完整场景帧缓存到 ~/.dsh-wallpaper-bg。
-        sceneRender: SCENE_RENDER_ENABLED ? 1 : 0,
       })
     }
     if (
@@ -1009,21 +829,8 @@ const server = http.createServer(async (req, res) => {
     ) {
       return sendJson(res, 200, { ok: true, current: await getCurrent() })
     }
-    if (p.startsWith('/scene-frame/')) {
-      return serveSceneFrame(req, res, url, p)
-    }
-    if (p === '/scene-anim/status') {
-      // 关闭时不调用 animCacheDir()（它会创建 ~/.dsh-wallpaper-bg/cache/scene-anim）
-      if (!SCENE_RENDER_ENABLED) {
-        return sendJson(res, 403, {
-          ok: false,
-          error: '场景渲染未启用（默认关）：在 we-api.config 或环境变量设置 WE_SCENE_RENDER=1 后重启服务',
-        })
-      }
-      return sendJson(res, 200, { ok: true, jobs: sceneAnim.listJobs(), cacheDir: sceneAnim.animCacheDir() })
-    }
-    if (p.startsWith('/scene-anim/')) {
-      return serveSceneAnim(req, res, url, p)
+    if (p === '/capture') {
+      return serveCapture(req, res, url)
     }
     if (p.startsWith('/files/')) {
       const parsed = parseFilesPath(p)
@@ -1051,16 +858,12 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log('[WE-API] 只读代理服务已启动: http://' + HOST + ':' + PORT)
-  if (SCENE_RENDER_ENABLED) {
-    console.log('[WE-API] 端点: /health  /api/wallpapers  /api/current  /files/<id>/...  /scene-frame/<id>  /scene-anim/<id>')
-    // 仅在启用时才触碰缓存目录（调用 cacheDir() 会创建 ~/.dsh-wallpaper-bg）
-    console.log('[WE-API] 场景帧缓存: ' + sceneFrameCacheDir())
-    console.log('[WE-API] 动画烘焙缓存: ' + sceneAnim.animCacheDir())
-  } else {
-    console.log('[WE-API] 端点: /health  /api/wallpapers  /api/current  /files/<id>/...')
-    console.log('[WE-API] 场景渲染（/scene-frame、/scene-anim）: 未启用（默认关）——不会创建 ~/.dsh-wallpaper-bg')
-    console.log('[WE-API] 需要完整场景帧 / 烘焙动画时: 在 we-api.config 加一行 WE_SCENE_RENDER=1 后重启服务')
-  }
+  console.log('[WE-API] 端点: /health  /api/wallpapers  /api/current  /files/<id>/...  /capture')
+  const cap = probeCapture()
+  console.log(
+    '[WE-API] 桌面壁纸捕获（/capture）: ' +
+    (cap.desktopCapture ? '可用（内存中采样桌面画面，不落盘、不渲染）' : '不可用 — ' + cap.captureError),
+  )
   console.log('[WE-API] 壁纸库: ' + WE_WORKSHOP_PATH)
   console.log('[WE-API] 本服务只读，不调用任何设置/播放壁纸的接口，桌面壁纸不受影响。')
 })
