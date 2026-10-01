@@ -1,0 +1,115 @@
+name: Publish to npm (trusted publishing · provenance)
+
+# 用**基座仓库**的 OIDC 身份发布到 registry.npmjs.org，npm 会自动为这次发布生成 provenance
+#  attestation —— npm 包页面因此出现 "Built and signed on GitHub Actions" 徽章，点开直达
+#  本仓库 / commit / workflow，是 npm → GitHub 方向最硬的关联。
+#
+# 前置（一次性，在 npmjs.com 上做）：
+#   包页面 → Settings → Trusted Publisher → GitHub Actions，填：
+#     Organization or user: nishuoyang
+#     Repository:           dsh-wallpaper-bg
+#     Workflow filename:    publish-npm.yml      ← 必须和本文件名完全一致
+#     Environment:          （留空）
+#   配好之后不需要任何 NPM_TOKEN，provenance 也是自动的（npm CLI ≥ 11.5.1）。
+#
+# 为什么默认只手动触发：仓库里已有的 scripts/release.ps1 会在本地跑 npm publish；
+# 如果这里再挂 push.tags 触发，两者会抢同一个版本号（先到者成功，后到者 E409 重复发布）。
+# 想把发布完全搬到 CI：先用 release.ps1 -SkipNpm 让本地跳过 npm publish，再启用下面的
+# push.tags 触发（那时 release.ps1 的打标签 + 推送就会直接启动本工作流）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 要发布的版本（留空 = package.json 里的版本）
+        required: false
+        type: string
+      dry_run:
+        description: 只预检、不真的发布
+        required: false
+        default: false
+        type: boolean
+  # push:
+  #   tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # 必需：换 npm 的短期发布凭据 + 生成 provenance
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 升级 npm（trusted publishing 需要 npm ≥ 11.5.1）
+        run: |
+          set -euo pipefail
+          npm install -g npm@latest
+          echo "npm $(npm --version) / node $(node --version)"
+          if [ "$(printf '%s\n' '11.5.1' "$(npm --version)" | sort -V | head -n1)" != '11.5.1' ]; then
+            echo "::error::trusted publishing 需要 npm ≥ 11.5.1，当前 $(npm --version)"
+            exit 1
+          fi
+
+      - name: 预检（registry / 版本一致性 / 是否已发布 / 打包内容）
+        id: precheck
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          echo "registry: $(npm config get registry)"
+
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          WANT="${INPUT_VERSION:-$PKG_VERSION}"
+          echo "version=$WANT" >> "$GITHUB_OUTPUT"
+
+          if [ "$WANT" != "$PKG_VERSION" ]; then
+            echo "::error::输入版本 $WANT 与 package.json 里的 $PKG_VERSION 不一致（版本号请由 release.ps1 改写后再触发）"
+            exit 1
+          fi
+
+          if npm view "dsh-wallpaper-bg@$WANT" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::npm 上已存在 dsh-wallpaper-bg@$WANT，跳过发布（本流程幂等）"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::将发布 dsh-wallpaper-bg@$WANT；若第一次运行报 401 / ENEEDAUTH，说明 npmjs.com 上还没配 trusted publisher（见本文件顶部说明）"
+          fi
+
+          echo "--- 将要发布的内容 ---"
+          npm pack --dry-run
+
+      - name: npm publish（OIDC 免 token · 自动 provenance）
+        if: steps.precheck.outputs.already == 'false' && inputs.dry_run != true
+        run: npm publish --access public --provenance
+        # 备选：不想用 trusted publishing 就在仓库 Secrets 里加 NPM_TOKEN
+        # （granular access token，权限 Packages: read and write），并取消下面两行注释。
+        # env:
+        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: 结果摘要
+        if: always()
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### npm 发布"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| 版本 | \`$(node -p "require('./package.json').name")\` @ \`${{ steps.precheck.outputs.version }}\` |"
+            echo "| 已存在（跳过发布） | ${{ steps.precheck.outputs.already }} |"
+            echo "| dry run | $DRY_RUN |"
+            echo "| 包页面 | https://www.npmjs.com/package/dsh-wallpaper-bg |"
+            echo ""
+            echo "> 注册表要几分钟才可见；provenance 徽章随发布自动出现（public 仓库才有）。"
+          } >> "$GITHUB_STEP_SUMMARY"

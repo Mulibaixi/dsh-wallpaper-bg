@@ -2,6 +2,17 @@
 
 本文件记录 dsh-wallpaper-bg 的用户可见变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+> 发版时把下面的 `## [未发布]` 改成 `## [x.y.z] - YYYY-MM-DD`（`scripts/release.ps1` 要求存在对应版本条目）。
+
+## [未发布]
+
+### 变更
+
+- **npm ↔ GitHub 双向关联**：`package.json` 补齐 `repository` / `homepage` / `bugs` / `author`（从下一次发布会写进 npm 注册表元数据，npm 包页面随即出现指向本仓库的 Repository 链接）；README / README.zh.md 顶部新增 npm 版本 / 下载量 / release / license 徽章；仓库 About 的 Website 指向 npm 包页面。
+- **新增两个 CI 工作流**（`.github/workflows/`），都不改动现有发布流程：
+  - `publish-npm.yml`：用 OIDC **trusted publishing** 发布到 npmjs（无需 token），npm 自动附带 **provenance** 证明——npm 包页面出现 "Built and signed on GitHub Actions" 徽章，点开直达本仓库 / commit。默认只手动触发，避免与 `release.ps1` 的本地 `npm publish` 抢版本号。
+  - `publish-github-packages.yml`：GitHub Release 发布后把包镜像到 GitHub Packages（`@nishuoyang/dsh-wallpaper-bg`），让仓库右侧的 **Packages** 区块列出本包。该镜像仅供 GitHub 侧展示——GitHub Packages 的 npm 源即使 public 也要带 token 才能 install，对外安装仍走 npmjs。
+
 ## [0.5.2] - 2026-10-01
 
 ### 新增

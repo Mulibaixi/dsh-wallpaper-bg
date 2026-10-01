@@ -1,0 +1,89 @@
+name: Mirror to GitHub Packages
+
+# 目的：让仓库首页右侧的 **Packages** 区块真正列出本包 —— 那一块只显示 GitHub Packages
+#  （npm.pkg.github.com / ghcr.io）里的包，不会显示 registry.npmjs.org 上的包。
+#
+# 这是**镜像**，只为 GitHub 侧展示与分发，不是主发布渠道：
+#   GitHub Packages 的 npm 源即便包是 public，install 时也必须带 token
+#   （官方文档：In most registries, to pull a package, you must authenticate with a
+#    personal access token or GITHUB_TOKEN, regardless of whether the package is public）。
+#   所以对外安装请继续用 npmjs：`dsh plugin --profile web add dsh-wallpaper-bg` /
+#   桌面端「设置 → 插件」里填包名。这里发布的名字是 scoped 的
+#   `@nishuoyang/dsh-wallpaper-bg`（GitHub Packages 只接受 scoped 包名）。
+#
+# 触发时机选在 GitHub Release 发布之后：此时 release.ps1 的打标签、npm publish、
+# 建 Release 都已完成，两边不会抢同一个版本号。
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write # 用 GITHUB_TOKEN 发布到 npm.pkg.github.com
+
+concurrency:
+  group: mirror-github-packages
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      GH_PACKAGE_NAME: '@nishuoyang/dsh-wallpaper-bg'
+      GH_REPO_URL: https://github.com/nishuoyang/dsh-wallpaper-bg
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: '@nishuoyang'
+
+      - name: 改写成 GitHub Packages 需要的名字并关联仓库
+        run: |
+          set -euo pipefail
+          npm pkg set name="$GH_PACKAGE_NAME"
+          npm pkg set repository.url="$GH_REPO_URL"
+          npm pkg set publishConfig.registry=https://npm.pkg.github.com
+          node -e "const p=require('./package.json');console.log('name      :',p.name);console.log('version   :',p.version);console.log('repository:',p.repository.url);console.log('registry  :',p.publishConfig.registry)"
+
+      - name: 预检（该版本是否已镜像过）
+        id: precheck
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if npm view "$GH_PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::GitHub Packages 上已有 $GH_PACKAGE_NAME@$VERSION，跳过（本流程幂等）"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "--- 将要镜像的内容 ---"
+          npm pack --dry-run
+
+      - name: npm publish 到 npm.pkg.github.com（镜像）
+        if: steps.precheck.outputs.already == 'false'
+        run: npm publish --access public
+
+      - name: 结果摘要
+        if: always()
+        run: |
+          {
+            echo "### GitHub Packages 镜像"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| 名称 | \`$GH_PACKAGE_NAME\` @ \`${{ steps.precheck.outputs.version }}\` |"
+            echo "| 已存在（跳过发布） | ${{ steps.precheck.outputs.already }} |"
+            echo "| 我的包列表 | https://github.com/users/nishuoyang/packages |"
+            echo ""
+            echo "> 首次发布默认可见性是 private：若包页面显示为私有，去 Package settings 改成 public。"
+            echo "> 该源即使 public 也需要 token 才能 install —— 对外安装请用 npmjs.org。"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -169,4 +169,17 @@ Preflight refuses duplicate releases (tag already present locally or on the remo
 
 npm needs a few minutes after `npm publish` before the new version is visible in the registry, so the script polls for it (`-NpmWaitSeconds`, default 300) instead of checking once and aborting; if it still cannot see the version it only warns and continues to the GitHub Release, which itself is idempotent (creates, or attaches the tarball to an existing release). If a run is interrupted anyway, `-Resume` finishes it: it requires a clean worktree, verifies the existing tag points at HEAD, then skips the steps that already succeeded (commit / tag / push / publish) and runs the rest.
 
+### CI workflows (npm provenance / GitHub Packages mirror)
+
+`.github/workflows/` ships two workflows, both triggered manually or on demand, that make the npm ↔ GitHub link concrete:
+
+| Workflow | File | Trigger | What it does |
+| --- | --- | --- | --- |
+| Publish to npm | `publish-npm.yml` | manual (`workflow_dispatch`) | Publishes to npmjs with the repository's OIDC identity, so npm attaches a **provenance** attestation: the package page gets a "Built and signed on GitHub Actions" badge that links straight back to this repo / commit |
+| Mirror to GitHub Packages | `publish-github-packages.yml` | after a GitHub Release is published, or manual | Mirrors the package to `npm.pkg.github.com` as `@nishuoyang/dsh-wallpaper-bg`, so the repository's **Packages** sidebar actually lists it |
+
+Before using `publish-npm.yml`, configure a trusted publisher once on npmjs.com (package page → Settings → Trusted Publisher → GitHub Actions: `nishuoyang` / `dsh-wallpaper-bg` / `publish-npm.yml`). After that no token is needed — no `NPM_TOKEN` secret, no rotation (a repository secret named `NPM_TOKEN` is the token-based alternative; see the comments in the workflow file). It is manual-only by default so that it can never race `release.ps1`'s local `npm publish` for the same version; to move publishing entirely to CI, run `.\scripts\release.ps1 -SkipNpm` and enable the `push.tags` trigger inside the workflow.
+
+The mirror publishes with the workflow's `GITHUB_TOKEN`; the first publish defaults to private visibility, which you can flip to public in the package's settings. Note that GitHub Packages' npm registry requires authentication to install **even for public packages**, so installing always goes through npmjs (`dsh plugin add dsh-wallpaper-bg`, or the package name in the desktop app's plugin page) — the mirror exists purely for GitHub-side display.
+
 `legacy/` holds the pre-v0.1.0 dynamic-plugin (Cordis dynamic package) source, archived for reference only.
