@@ -85,26 +85,29 @@ async function main() {
   console.log('3) /api/current 当前壁纸')
   const cur = await get('/api/current')
   check('响应 ok=true', cur.ok === true)
+  check('带回跟随的显示器与判定依据', typeof cur.monitor === 'string' &&
+    ['manual', 'changed', 'live', 'first', 'none'].includes(cur.monitorSource),
+    'monitor=' + cur.monitor + ' source=' + cur.monitorSource)
+  check('monitors 列表可用（供面板显示器下拉）', Array.isArray(cur.monitors) &&
+    cur.monitors.filter((m) => m.selected).length <= 1,
+    Array.isArray(cur.monitors) ? cur.monitors.map((m) => m.key + (m.selected ? '*' : '')).join(' ') : 'missing')
   if (cur.current) {
     const c = normalizeItem(cur.current)
     check('当前壁纸可归一化', !!c)
     check('id/title/filepath 齐全', !!(c && c.id && c.title), JSON.stringify(c && { id: c.id, title: c.title, kind: c.kind }))
     check('与列表中的条目可对应', normalized.some((w) => w.id === c.id),
       'id=' + (c && c.id))
+    if (cur.current.type === 'scene') {
+      check('场景工坊预览图尺寸可解析（状态行据此说明发虚原因）', !!cur.current.previewSize,
+        JSON.stringify(cur.current.previewSize))
+    }
   } else {
     console.log('  [提示] current 为 null（WE 未设置壁纸或 config 无记录）')
   }
 
-  console.log('4) /capture 桌面壁纸捕获')
-  try {
-    const capRes = await fetch(base + '/capture?w=960')
-    check('捕获 200 且为 JPEG', capRes.status === 200 && capRes.headers.get('content-type') === 'image/jpeg')
-    const buf = Buffer.from(await capRes.arrayBuffer())
-    check('捕获帧非空（>5KB）', buf.length > 5000, (buf.length / 1024).toFixed(0) + 'KB')
-    check('缓存策略 no-store', (capRes.headers.get('cache-control') || '').includes('no-store'))
-  } catch (err) {
-    check('/capture 可用', false, String((err && err.message) || err))
-  }
+  console.log('4) /capture 已移除（0.4.x 的桌面画面捕获）')
+  const capRes = await fetch(base + '/capture?w=960')
+  check('返回 404', capRes.status === 404, 'status=' + capRes.status)
 
   console.log('')
   console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败')

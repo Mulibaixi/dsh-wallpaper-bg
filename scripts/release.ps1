@@ -5,7 +5,7 @@
 
   用法（在仓库根目录执行）：
     .\scripts\release.ps1                      # 发布 package.json 里当前的版本
-    .\scripts\release.ps1 -Version 0.4.2       # 先批量改版本号，再发布
+    .\scripts\release.ps1 -Version 0.5.1       # 先批量改版本号，再发布
     .\scripts\release.ps1 -DryRun              # 只做检查与预览，不产生任何改动
     .\scripts\release.ps1 -Resume              # 上次中断后续跑（已提交/已打标签/已发 npm 自动跳过）
     .\scripts\release.ps1 -SkipGitHub          # 不发 GitHub Release

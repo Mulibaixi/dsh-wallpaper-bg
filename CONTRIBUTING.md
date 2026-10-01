@@ -40,7 +40,8 @@ There is no build step: `lib/host.js` and `lib/client.js` are shipped as-is.
 
 Please actually run what you changed, and say so in the PR description.
 
-- **WE API service** — with the service up on `127.0.0.1:8088`, `node verify-service.mjs` runs the end-to-end contract checks (wallpaper list fields, `/capture`, the web-wallpaper file route with ETag / Range). Note that it asserts the **service** version (`0.4.0`), which is versioned separately from the plugin version.
+- **WE API service** — with the service up on `127.0.0.1:8088`, `node verify-service.mjs` runs the end-to-end contract checks (wallpaper list fields, `/api/current`'s monitor resolution and `?monitor=` override, the web-wallpaper file route with ETag / Range, and the removed endpoints — `/capture`, `/scene-frame`, `/scene-anim` — returning `404`). Note that it asserts the **service** version (`0.5.1`), which is versioned separately from the plugin version. Use `WEAPI_BASE=http://127.0.0.1:8099` to point it at a throwaway instance instead of the live one.
+- **Plugin host half** — `node verify-host.mjs` mounts `lib/host.js` with a minimal `ctx` and drives its real routes with fake `req` / `res` (no DSH needed): `/health` capability flags, `monitor` forwarding plus per-monitor caching on `/we?action=current`, the wallpaper list, and the `/asset` proxy.
 - **Plugin UI** — switch sources in 设置 → 壁纸 and describe what you saw. Screenshots or a short recording are very welcome for UI changes.
 - **Batch scripts** — double-click the `.bat` you touched, including the first-run wizard path (run `启动服务.bat` with no `we-api.config` present).
 
@@ -116,7 +117,8 @@ npm install
 
 请真的跑一遍你改的东西，并在 PR 描述里写清楚。
 
-- **WE API 服务** —— 服务跑在 `127.0.0.1:8088` 上时，`node verify-service.mjs` 做端到端契约校验（列表字段、`/capture`、网页文件路由的 ETag / Range）。注意它断言的是**服务版本**（`0.4.0`），服务版本和插件版本是两条线。
+- **WE API 服务** —— 服务跑在 `127.0.0.1:8088` 上时，`node verify-service.mjs` 做端到端契约校验（列表字段、`/api/current` 的显示器判定与 `?monitor=` 覆盖、网页文件路由的 ETag / Range、已移除端点 `/capture` / `/scene-frame` / `/scene-anim` 一律 `404`）。注意它断言的是**服务版本**（`0.5.1`），服务版本和插件版本是两条线；用 `WEAPI_BASE=http://127.0.0.1:8099` 可以指向临时实例而不是正在用的那一份。
+- **插件宿主半** —— `node verify-host.mjs` 用最小 `ctx` 挂载 `lib/host.js`，拿假 `req` / `res` 打真实路由（不需要 DSH）：`/health` 能力位、`/we?action=current` 的 `monitor` 透传与按显示器分缓存、壁纸列表、`/asset` 代理。
 - **插件界面** —— 在 设置 → 壁纸 里切一遍来源，说明你看到的现象；界面改动请附截图或短录屏。
 - **批处理** —— 双击你改过的 `.bat`，包括首次运行向导那条路径（在没有 `we-api.config` 的情况下跑 `启动服务.bat`）。
 

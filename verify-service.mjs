@@ -1,15 +1,18 @@
-// 重建后的 WE API 服务验收：列表字段 / 桌面壁纸捕获（/capture）/
-// 网页文件路由（ETag·Range·垫片·Referer 兜底）
-const BASE = 'http://127.0.0.1:8088';
+// 重建后的 WE API 服务验收：列表字段 / 当前壁纸的显示器判定 / 网页文件路由
+// （ETag·Range·垫片·Referer 兜底），以及「已移除」的端点（/scene-frame、/scene-anim、/capture 一律 404）
+//
+// 用法：node verify-service.mjs                       （默认 127.0.0.1:8088）
+//       WEAPI_BASE=http://127.0.0.1:8099 node verify-service.mjs
+const BASE = (process.env.WEAPI_BASE || 'http://127.0.0.1:8088').replace(/\/+$/, '');
 let pass = 0, fail = 0;
 const ok = (name, cond, extra = '') => { if (cond) { pass++; console.log(`  PASS ${name}${extra ? ' — ' + extra : ''}`); } else { fail++; console.log(`  FAIL ${name}${extra ? ' — ' + extra : ''}`); } };
 
 const health = await (await fetch(BASE + '/health')).json();
 console.log('health:', JSON.stringify(health).slice(0, 220));
-ok('health version 0.4.0', health.version === '0.4.0');
+ok('health version 0.5.1', health.version === '0.5.1');
 ok('health webShim', health.webShim === 1);
-const CAPTURE_ON = health.desktopCapture === 1;
-ok('health desktopCapture is 0 or 1', CAPTURE_ON || health.desktopCapture === 0, `desktopCapture=${health.desktopCapture}`);
+ok('health monitorSelect (当前壁纸支持指定显示器)', health.monitorSelect === 1);
+ok('health has no desktopCapture field (capture removed)', health.desktopCapture === undefined);
 ok('no sceneRender field (renderer removed)', health.sceneRender === undefined);
 
 const list = await (await fetch(BASE + '/api/wallpapers')).json();
@@ -22,23 +25,41 @@ ok('scene previewFile absolute', !!(scene && scene.previewFile && /^[A-Za-z]:\\/
 ok('scene has no hasFrame field (renderer removed)', scene && scene.hasFrame === undefined);
 ok('video item present', !!video);
 
-// 桌面壁纸捕获（/capture）：内存采样桌面画面，JPEG 直出，不出 /scene-frame、/scene-anim
-const cap = await fetch(`${BASE}/capture?w=960`);
-ok('capture 200 image/jpeg', cap.status === 200 && cap.headers.get('content-type') === 'image/jpeg',
-  `type=${cap.headers.get('content-type')}`);
-const capBuf = Buffer.from(await cap.arrayBuffer());
-ok('capture bytes > 5KB (real picture)', capBuf.length > 5000, `${(capBuf.length / 1024).toFixed(0)}KB`);
-ok('capture cache no-store', cap.headers.get('cache-control') === 'no-store' || cap.headers.get('cache-control') === 'no-cache');
-ok('capture CORS *', cap.headers.get('access-control-allow-origin') === '*');
-ok('capture black-frame header', cap.headers.get('x-capture-black') === '0' || cap.headers.get('x-capture-black') === '1',
-  `x-capture-black=${cap.headers.get('x-capture-black')}`);
-const capH = await fetch(`${BASE}/capture?w=1280`, { method: 'HEAD' });
-ok('capture HEAD', capH.status === 200 && capH.headers.get('content-length') > 0);
-const cap2 = await fetch(`${BASE}/capture`);
-ok('capture default width works', cap2.status === 200 && (await cap2.arrayBuffer()).byteLength > 0);
+// 当前桌面壁纸：必须明确「跟随哪台显示器」以及为什么（monitor / monitorSource），
+// 并列出所有显示器供插件端做下拉（旧实现盲取 Monitor0，多屏用户会跟到另一台屏的旧壁纸）
+const cur = await (await fetch(BASE + '/api/current')).json();
+console.log('current:', JSON.stringify({ monitor: cur.monitor, source: cur.monitorSource, title: cur.current && cur.current.title, type: cur.current && cur.current.type }).slice(0, 200));
+const SOURCES = ['manual', 'changed', 'live', 'first', 'none'];
+ok('current ok', cur.ok === true);
+ok('current.monitorSource valid', SOURCES.includes(cur.monitorSource), `source=${cur.monitorSource}`);
+ok('current.monitors is array', Array.isArray(cur.monitors));
+if (Array.isArray(cur.monitors) && cur.monitors.length) {
+  ok('monitors[] entries have key/title/type/selected', cur.monitors.every((m) => typeof m.key === 'string' && 'title' in m && 'type' in m && typeof m.selected === 'boolean'));
+  const chosen = cur.monitors.filter((m) => m.selected);
+  ok('exactly one monitor selected', chosen.length === 1, `selected=${chosen.map((m) => m.key).join(',')}`);
+  ok('current 与选中的显示器一致', !!cur.current && chosen.length === 1 && String(cur.current.title) === String(chosen[0].title), `monitor=${cur.monitor}`);
+  if (cur.current && cur.current.type === 'scene') {
+    const ps = cur.current.previewSize;
+    ok('scene previewSize parsed (GIF/PNG/JPEG)', !!ps && ps.w > 0 && ps.h > 0, ps ? `${ps.w}x${ps.h}` : 'null');
+  }
+  // 显式指定显示器：manual 优先级最高，且必须真的换到那台
+  const key0 = cur.monitors[0].key;
+  const forced = await (await fetch(`${BASE}/api/current?monitor=${encodeURIComponent(key0)}`)).json();
+  ok('monitor=<key> → manual 且切到该显示器', forced.monitorSource === 'manual' && forced.monitor === key0, `monitor=${forced.monitor}`);
+  const num = /^Monitor(\d+)$/.exec(cur.monitors[cur.monitors.length - 1].key);
+  if (num) {
+    const byIndex = await (await fetch(`${BASE}/api/current?monitor=${num[1]}`)).json();
+    ok('monitor=<数字> 也接受', byIndex.monitor === cur.monitors[cur.monitors.length - 1].key, `monitor=${byIndex.monitor}`);
+  }
+  const bogus = await (await fetch(`${BASE}/api/current?monitor=Nope`)).json();
+  ok('无效 monitor 退回自动判定', bogus.ok === true && bogus.monitorSource !== 'manual', `source=${bogus.monitorSource}`);
+} else {
+  console.log('  (WE 里没有显示器壁纸记录，跳过 monitor 判定用例)');
+}
 
-// 旧的本地渲染路由必须彻底消失（不产生任何图片/视频垃圾）
-for (const old of ['/scene-frame/3422426571', '/scene-anim/3422426571', '/scene-anim/status']) {
+// 桌面画面捕获（0.4.x 的 /capture）与旧的本地渲染路由必须彻底消失
+// （场景改由工坊预览图显示，插件端不再采样桌面、不产生任何图片 / 视频垃圾）
+for (const old of ['/capture', '/scene-frame/3422426571', '/scene-anim/3422426571', '/scene-anim/status']) {
   const r = await fetch(`${BASE}${old}`);
   ok(`${old} → 404 (removed)`, r.status === 404, `status=${r.status}`);
 }

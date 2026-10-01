@@ -2,6 +2,46 @@
 
 本文件记录 dsh-wallpaper-bg 的用户可见变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.5.1] - 2026-10-01
+
+> 本版**一并发布此前未单独发版的 0.5.0**（「同步桌面壁纸」回到只读跟随、场景改显示工坊预览图、WE API 服务移除桌面画面捕获等）——完整说明见下方 [0.5.0] 条目。
+
+### 修复
+
+- **「同步桌面壁纸」跟错显示器**（多屏 / 笔记本 + 外接屏常见）：`/api/current` 旧实现直接取 WE `config.json` 里 `selectedwallpapers.Monitor0`，而这个键的编号由 WE 自己维护——显示器插拔、切换主屏、笔记本内屏关掉之后，`Monitor0` 往往不是你正在看的那台。表现就是**页面一直是「以前那张」壁纸**（很容易被误判成缓存没清、同步没生效）。
+  - 现在按四级判定跟随哪台显示器：**手动指定**（设置面板「跟随显示器」下拉）→ **最近换过壁纸的那台**（对比 `wallpaperconfigrecent` 最后两条配置的差异；日常使用中就是正在看的那台）→ **正在被读取 / 播放的那台**（各显示器壁纸媒体文件 `atime` 最新者：没在渲染的壁纸不会更新 atime）→ `Monitor0` 兜底。全程仍只读 `config.json` + `stat`，不采样桌面画面、不调用 WE 任何写入接口。
+  - `/api/current` 响应新增 `monitor` / `monitorSource`（`manual` / `changed` / `live` / `first` / `none`）与 `monitors[]`（每台显示器的键、标题、类型、是否正在播放、是否被选中）；`?monitor=Monitor1`（或 `?monitor=1`）可显式指定，非法值自动退回自动判定。旧字段 `current` 原样保留，旧客户端不受影响。
+  - 插件端：WE 页签的**同步状态行**显示「显示器 Monitor1（自动：最近换过壁纸的那台）」，多显示器时出现**「跟随显示器」下拉**（`auto` = 自动判定，也可钉死某台）；`monitor` 经宿主半透传给服务，并计入宿主缓存键（切显示器立刻生效，不会命中上一台的缓存）。
+  - **场景壁纸的预览图会如实标注像素**：服务端解析 `preview.gif` / `preview.jpg` 头部，状态行显示「实测 192×192 像素，全屏放大后必然发虚」——WE 工坊预览图普遍只有 192×192，说出来才不会又被当成「缓存里的旧图」。视频 / 图片 / 网页壁纸仍是原生渲染，不受影响。
+  - **修掉「跟随显示器」下拉与「立即刷新」按钮文字重叠**：初版把 `<select>` 包在 `<label>` 里塞进 `.wbg-row`，而面板早已有 `.wbg-row label{width:88px;flex:none}` 规则——`label` 被钉成 88px 宽（「跟随显示器」竖着折成 4 行），`select`（选项里还塞了完整壁纸标题）溢出到按钮底下。现在改用独立的 `div.wbg-sync`：整块 `flex:1 1 auto;min-width:0`、`select` 同样 `min-width:0`，空间不够时一起收缩 / 换行而不是覆盖按钮；下拉选项文案精简为「Monitor1（视频）· 正在播放」，完整标题仍在上方状态行里。已在 380 / 300 / 220px 三种宽度下用无头 Chrome 渲染核对（旧写法能复现原图，新写法不再重叠）。
+
+### 变更
+
+- `scripts/release.ps1` 补 UTF-8 **BOM**：Windows PowerShell 5.1 对没有 BOM 的 `.ps1` 按 ANSI 解码，脚本里的中文提示会让整个脚本在**解析阶段**就失败（`字符串缺少终止符`），只有 PowerShell 7 才跑得起来。与 0.3.x 给 `install-local.ps1` 补 BOM 是同一类问题（0.5.1 发布时实测踩到）。
+- WE API 服务版本 0.5.1（`/health` 新增 `monitorSelect: 1`）；插件版本 0.5.1（宿主半 `/dsh-wallpaper-bg/health` 新增 `monitorForward: 1`）。宿主半随 `dsh` 启动加载：若该标记缺失（旧宿主半），面板会提示「指定显示器需要重启 dsh 后生效」，而不是让下拉静默无效。
+- 新增 `verify-host.mjs`：不启动 DSH，用最小 ctx 直接挂载宿主半、以假 req/res 打真实路由（`/health`、`/we?action=current` 的显示器透传与缓存维度、`/we?action=list`、`/asset`）。`verify-service.mjs` 增加当前壁纸的显示器判定用例，并支持用 `WEAPI_BASE` 指向非 8088 端口。
+
+## [0.5.0] - 2026-09-30
+
+### 变更
+
+- **场景类壁纸一律显示 WE 工坊预览图，「同步桌面壁纸」回到只读跟随**：0.4.0 为「在网页里看会动的场景」引入了桌面截图镜像（约每秒采样一次桌面画面），实际观感并不划算——镜像到的是**整个桌面**（任务栏、其它窗口都会进画面），帧率只有 ~1 fps，还要求 WE 正在运行。现在回到最干净的做法：
+  - 场景壁纸（手动选中 / 播放队列 / 桌面同步）一律显示 WE 自带的工坊预览图 `preview.gif`（会动）/ `preview.jpg`，不再与服务端产生任何帧请求；
+  - 「同步桌面壁纸」恢复为**只读跟随**：桌面换成哪张、页面对上（30 秒轮询 + 切回 DSH 页签立即跟随），然后按类型走普通渲染路径——场景 → 工坊预览图、视频 → 视频、图片 → 图片、网页 → iframe；**同步状态行**显示跟随的壁纸标题 / 类型 / 上次同步时间，带「立即刷新」，跟随到场景时额外说明「页面显示的是工坊预览图」；
+  - 想要 100% 保真的动态场景：用 WE 托盘菜单的屏幕录制（或 OBS）录 30 秒左右导出 MP4，再从「自定义上传」导入，浏览器里用原生 `<video>` 播放——完整流畅、零额外开销（README 常见问题里一直保留这条建议）。
+- 插件版本 0.5.0；建议搭配 **WE API 服务 0.5.0**（`/health` 的 `version` 应为 `0.5.0`）。旧版服务（0.4.x）与本版插件混用不会报错，只是 `capture` 端点不再被调用。
+
+### 移除
+
+- **WE API 服务移除桌面画面捕获整套实现**：删除 `lib/desktop-capture.js`（`PrintWindow(Progman, PW_RENDERFULLCONTENT)` + 主屏 `StretchBlt` + `koffi` FFI / `jpeg-js` 编码）、`GET /capture` 路由与 `probe()` 探测；`/health` 不再上报 `desktopCapture` / `captureError` / `primary`（保留 `webShim`、`weRunning` 与路径信息）；`package.json` 依赖回到只剩 `wallpaper-engine-api`（`package-lock.json` 同步收敛，`koffi` / `jpeg-js` 及其 win32 原生模块不再安装）。`/capture` 现在一律 `404`。
+- **插件侧移除全部镜像代码与文案**：`lib/client.js` 的镜像轮询 / 单 `<img>` 换帧 / 黑帧提示 / 捕获不可用提示、`lib/host.js` 透传的 `desktopCapture` 能力位、设置面板与 README 中「实时镜像桌面画面」的表述全部删除。
+- 启动向导写入的 `we-api.config` 注释与 `启动服务.bat` 输出同步改写（桌面同步只需跟随桌面壁纸，没有任何需要开启的开关）。
+
+### 维护
+
+- `verify-service.mjs` 契约校验适配：断言服务版本 `0.5.0`、`/health` 无 `desktopCapture` 字段、`/capture` 与 `/scene-frame`、`/scene-anim` 一律 `404`；`test-bridge.js` 第 4 项改为「`/capture` 已移除」。
+- 文档：README（中英）特性表 / 设置面板说明 / 原理 / 常见问题里与镜像、捕获相关的段落全部改写；CONTRIBUTING、SECURITY 同步更新（服务只列列表、只读文件、只读当前壁纸，**不采样屏幕**）。
+
 ## [0.4.2] - 2026-09-30
 
 ### 修复

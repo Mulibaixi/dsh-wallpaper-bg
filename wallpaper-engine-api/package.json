@@ -1,9 +1,7 @@
 {
   "name": "dsh-wallpaper-bg-we-api",
-  "version": "0.4.0",
+  "version": "0.5.1",
   "dependencies": {
-    "jpeg-js": "^0.4.4",
-    "koffi": "^3.2.1",
     "wallpaper-engine-api": "^1.0.2"
   }
 }

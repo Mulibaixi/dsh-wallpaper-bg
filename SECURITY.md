@@ -9,8 +9,8 @@ Only the latest release receives fixes. / 只维护最新版本。
 | 0.4.x | ✅ |
 | ≤ 0.3.x | ❌ |
 
-The WE API service (`wallpaper-engine-api/`) carries its own version number (currently `0.4.0`, visible in `/health`) and moves together with the plugin.
-WE API 服务（`wallpaper-engine-api/`）有独立的版本号（当前 `0.4.0`，见 `/health`），随插件一起更新。
+The WE API service (`wallpaper-engine-api/`) carries its own version number (currently `0.5.1`, visible in `/health`) and moves together with the plugin.
+WE API 服务（`wallpaper-engine-api/`）有独立的版本号（当前 `0.5.1`，见 `/health`），随插件一起更新。
 
 ## Reporting a vulnerability / 报告漏洞
 
@@ -51,8 +51,8 @@ This is a spare-time project: expect an acknowledgement within a few days, and t
 These are deliberate properties of the project. A report showing that one of them is **not** true is a valid vulnerability:
 以下是本项目的既定属性；如果发现其中某条**不成立**，那就是有效漏洞：
 
-- **Read-only with respect to your desktop.** The service lists installed wallpapers, reads their files, and samples the wallpaper Wallpaper Engine is already rendering (`/capture`). It never sets or changes your wallpaper.
-  **对桌面只读**：只列列表、读文件、采样 Wallpaper Engine 正在渲染的画面，从不设置或更换壁纸。
+- **Read-only with respect to your desktop.** The service only lists installed wallpapers, reads their files, and reports which wallpaper is currently set (`/api/wallpapers`, `/api/current`, `/files/<id>/...`). To decide *which monitor* to follow it reads WE's `config.json` and the access timestamps (`stat`) of the wallpaper media files — no file contents beyond what the plugin renders. It never captures your screen, never renders wallpapers locally and never sets or changes your wallpaper.
+  **对桌面只读**：只列列表、读文件、读出当前设置的是哪张；为判定「跟随哪台显示器」会读 WE 的 `config.json` 与壁纸媒体文件的访问时间（`stat`），不读其它内容。从不截屏、不在本地渲染，也从不设置或更换壁纸。
 - **Loopback only.** The HTTP server binds to `127.0.0.1:8088`; it is not meant to be reachable from other machines.
   **只监听回环地址**：`127.0.0.1:8088`，不面向其他机器。
 - **No telemetry.** Nothing is sent anywhere except `127.0.0.1:8088`; there is no analytics and no update ping.

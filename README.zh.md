@@ -1,10 +1,10 @@
 # dsh-wallpaper-bg
 
-> v0.4.2 · MIT License
+> v0.5.1 · MIT License
 
 [English](README.md) | 中文
 
-给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）界面加上一层**独立的动态壁纸背景**的静态双半插件——`dsh web` 网页界面和 0.2 **桌面端**都适用：装好（命令行一条命令；桌面端更是只在插件页面里填个包名）、刷新页面，整个界面的底层就变成一张会动的壁纸。内置 10 张 Unsplash 高清图，支持本地自定义图片 / 视频上传，还能只读接入本机 Wallpaper Engine 壁纸库——视频、网页壁纸在浏览器里原生渲染，**「同步桌面壁纸」则实时镜像桌面画面**（Wallpaper Engine 本来就在桌面上用 GPU 渲染当前壁纸，插件只是采样这些像素，场景的粒子 / 着色器 / 角色呼吸都会动，且零本地渲染、零缓存文件）。浅色外观自动铺半透明白雾、深色外观自动压暗遮罩，保证界面细字始终清晰。背景层与桌面 Wallpaper Engine 完全独立：在 DSH 里换壁纸不会动你的桌面壁纸，反之亦然。
+给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）界面加上一层**独立的动态壁纸背景**的静态双半插件——`dsh web` 网页界面和 0.2 **桌面端**都适用：装好（命令行一条命令；桌面端更是只在插件页面里填个包名）、刷新页面，整个界面的底层就变成一张会动的壁纸。内置 10 张 Unsplash 高清图，支持本地自定义图片 / 视频上传，还能只读接入本机 Wallpaper Engine 壁纸库——视频、网页壁纸在浏览器里原生渲染，**「同步桌面壁纸」则只读跟随当前桌面壁纸**（桌面换一张、页面对上：场景显示 WE 工坊预览图 `preview.gif`，视频 / 图片 / 网页各按原生方式渲染；不采样桌面画面、零本地渲染、零缓存文件）。浅色外观自动铺半透明白雾、深色外观自动压暗遮罩，保证界面细字始终清晰。背景层与桌面 Wallpaper Engine 完全独立：在 DSH 里换壁纸不会动你的桌面壁纸，反之亦然。
 
 ![暗色外观下的 DSH 界面](docs/screenshots/overview-dark.jpg)
 
@@ -26,17 +26,17 @@
 - **三种渲染**
   - 静态图片（cover 铺满）；
   - 视频（`<video object-fit: cover>`，GPU 合成缩放，无黑边无变形）；
-  - 场景（手动选中显示 WE 自带的工坊预览图 `preview.gif` / `preview.jpg`；想看**活的**场景——粒子飘动、水面波动、角色呼吸——开启「同步桌面壁纸」，直接镜像 Wallpaper Engine 正在桌面渲染的画面，约每秒 1 帧）；
+  - 场景（一律显示 WE 自带的工坊预览图 `preview.gif` / `preview.jpg`——手选 / 队列 / 桌面同步都是同一张，`preview.gif` 本身会动；想要完整保真的动态场景，用 WE 的屏幕录制或 OBS 录成 MP4，再从「自定义上传」导入播放）；
   - 网页（web 类型壁纸 iframe 原生渲染 `index.html`，浏览器里真跑起来）。
-- **零本地渲染、零缓存文件**：插件不再解析 `scene.pkg`、不再烘焙视频。桌面同步直接采样 WE 正在桌面渲染的画面（`PrintWindow(Progman, PW_RENDERFULLCONTENT)`，DWM 合成路径；新式独立 swapchain 下 GDI BitBlt 会拿黑帧，PrintWindow 才可靠，失败时回退 BitBlt）——不建 `~/.dsh-wallpaper-bg`、不落帧文件、不产 MP4。本地场景渲染器与烘焙整套代码在 **0.4.0 已彻底移除**，`WE_SCENE_RENDER` 开关一并删除。
+- **零本地渲染、零缓存文件**：插件不解析 `scene.pkg`、不渲染场景帧、不烘焙视频、不采样桌面画面——不建 `~/.dsh-wallpaper-bg`、不落帧文件、不产 MP4。本地场景渲染器与烘焙整套代码在 **0.4.0 已彻底移除**，`WE_SCENE_RENDER` 开关一并删除；0.4.x 用来镜像桌面的画面捕获（`/capture`）也在 **0.5.0 移除**。
 - **四项调节**：浅色雾层 / 深色遮罩（随 DSH 主题自动切换）、背景模糊度（0–20px）、背景亮度（50–150%）、安全放大（0–10%，裁掉边缘黑边）。
-- **无黑屏切换**：换壁纸（含队列循环切图）采用双层交叉淡入淡出——新壁纸先在自己的图层里预加载、解码 / 起播完成，再与旧壁纸叠化约 0.42 秒，旧层淡出结束才移除。图片、视频、场景预览、网页、桌面镜像各种渲染都适用，切换过程中任何一帧都有画面，不会再闪一下黑屏。
+- **无黑屏切换**：换壁纸（含队列循环切图）采用双层交叉淡入淡出——新壁纸先在自己的图层里预加载、解码 / 起播完成，再与旧壁纸叠化约 0.42 秒，旧层淡出结束才移除。图片、视频、场景预览、网页各种渲染都适用，切换过程中任何一帧都有画面，不会再闪一下黑屏。
 - **下一张预热**：队列循环播放时，停留期间就提前把下一张拉好（网络图片提前下载解码、WE 视频提前建好 `<video>` 元素缓冲数据、自定义上传提前读库并建好 objectURL），到点切换几乎立刻开始叠化，不再干等下载。
 - **白场片头自动跳过**：部分壁纸视频本身开头是一段纯白片头（如《明日方舟》「喧闹法则」前 2 秒整帧纯白），预热时会探出正片起点并直接从那里开始播，切过去不会再看到一大片白。
 - **切换不残留后台解码**：旧图层淡出时会彻底停掉抽帧定时器并释放视频（`pause()` + 断开 `src`），循环列表切多少次都只保留当前这一路解码。实测连续切换 6 次帧率稳定在 58–60 fps（修复前会从 59.7 一路掉到 12.2 fps）。
 - **4K 视频不吃性能**：视频层用 `<video object-fit: cover>` 由合成器（GPU）缩放铺满，不再每帧 `drawImage` 到 canvas（4K 取一帧要 20–40ms），也去掉了 30fps 抽帧定时器；同时避免挂「恒等滤镜」（`blur(0px) brightness(100%)` 会禁用 GPU 合成）。实测 4K 壁纸从 **22–27 fps 提升到 57–60 fps**，每秒长帧从 68–72 降到 3–9。
 - **页签只换视图**：切换「内置壁纸 / 自定义上传 / WE 壁纸库」只改变面板显示，**背景壁纸保持不动**——点选某张壁纸、操作播放队列或开启「同步桌面壁纸」（与 WE 队列互斥）时才真正应用。
-- **同步桌面壁纸**开关：**实时镜像当前桌面壁纸**——插件采样 Wallpaper Engine 正在桌面渲染的画面（约每秒 1 帧，JPEG 在内存里生成，不落盘），场景会像在桌面上一样动起来，视频 / 网页 / 图片类桌面壁纸同样镜像。面板显示**同步状态行**（正在跟随的壁纸标题 / 类型、上次同步时间、镜像状态）并带「立即刷新」按钮；切回 DSH 页签时立刻再跟一次。只读，不修改桌面。手动选中场景壁纸时显示 WE 自带的工坊预览图（`preview.gif` / `preview.jpg`）。
+- **同步桌面壁纸**开关：**只读跟随当前桌面壁纸**——桌面换到哪张、页面对上（30 秒轮询，切回 DSH 页签立即跟随），然后按类型正常渲染：场景显示工坊预览图（`preview.gif` / `preview.jpg`）、视频播视频、图片显示图片、网页用 iframe 原生渲染。面板显示**同步状态行**（正在跟随的壁纸标题 / 类型、跟随的显示器与判定依据、上次同步时间）并带「立即刷新」按钮。**多显示器会自动判定跟哪台**（最近换过壁纸的那台 → 正在被读取 / 播放的那台 → `Monitor0` 兜底），状态行里也能**手动指定显示器**。不修改桌面，不采样桌面画面，不产生任何缓存文件。
 - WE 库内筛选：类型（全部 / 视频 / 场景 / 网页）+ 分级（非18+ / 18+，18+ 卡片带红色角标，实时显示计数）；**每次进入「WE 壁纸库」页签，分级默认回到「非18+」**。
 - 设置持久化到 localStorage；界面表面自动半透明化以透出背景。
 
@@ -86,9 +86,9 @@ dsh plugin --profile web add dsh-wallpaper-bg
 
 服务**只读**：仅调用列表 / 当前壁纸查询，绝不触碰设置或播放接口；未检测到 WE 运行时也不会拉起 WE 主程序。列表按 Steam 真实订阅清单（`431960_subscriptions.vdf`）过滤——在 WE 里退订 / 本地禁用的壁纸即使文件夹残留也不会再出现，与 WE 界面一致。
 
-**0.4.0 起服务新增桌面壁纸捕获**（「同步桌面壁纸」的底座）：`GET /capture?w=&q=` 返回一帧 JPEG（内存生成、`no-store`）——采样 Wallpaper Engine 正在桌面渲染的画面：`PrintWindow(Progman, PW_RENDERFULLCONTENT)`（DWM 合成路径，包含 WE 的 `WPEDesktopDX11Window` D3D 子窗口；新式独立 swapchain 合成下 GDI `BitBlt` 只能拿到全黑帧，PrintWindow 才是可靠主路径，失败时回退 BitBlt）→ 主屏区域 `StretchBlt` 缩放 → 纯 JS JPEG 编码。**不本地渲染、不落盘**：不解析 `scene.pkg`、不生成帧 / 视频、不再创建 `~/.dsh-wallpaper-bg`。帧若为纯黑（WE 暂停渲染 / 桌面被遮盖）由响应头 `X-Capture-Black: 1` 上报，客户端在状态行给出提示而不是默默黑屏。旧的本地场景渲染器（`/scene-frame`、`/scene-anim`、`lib/we-renderer/`）与 `WE_SCENE_RENDER` 开关已**整体移除**——旧端点一律返回 `404`，`/health` 改为上报 `"desktopCapture": 1`（及 `"weRunning"`）。
+**0.5.0 起服务回归纯只读的列表 / 文件服务**：`/health`、`/api/wallpapers`、`/api/current`、`/files/<id>/...`。0.4.x 的桌面画面捕获 `GET /capture?w=&q=`（`PrintWindow(Progman, …)` 采样桌面 + `koffi` / `jpeg-js`）与 0.3.x 的本地场景渲染器（`/scene-frame`、`/scene-anim`、`lib/we-renderer/`）一样已**整体移除**——旧端点一律返回 `404`，`/health` 不再上报 `desktopCapture`，只保留 `"webShim": 1`、`"weRunning"` 与 0.5.1 起的 `"monitorSelect": 1`（当前壁纸支持指定显示器）。服务不解析 `scene.pkg`、不生成帧 / 视频、不采样桌面、不创建 `~/.dsh-wallpaper-bg`；场景壁纸由插件端显示 WE 工坊预览图（`preview.gif` / `preview.jpg`）。
 
-> 验证：浏览器打开 `http://127.0.0.1:8088/health` 返回 JSON 即 WE 服务正常（`"desktopCapture": 1` 表示捕获就绪；`0` = 无交互桌面或 WE 未运行）；插件侧则看 `<DSH 地址>/dsh-wallpaper-bg/health`——`dsh web` 默认端口 3080，即 `http://127.0.0.1:3080/dsh-wallpaper-bg/health`；桌面端固定 **19387**（0.2 桌面端启动 `desktop` profile 时写死 `--port 19387`），即 `http://127.0.0.1:19387/dsh-wallpaper-bg/health`。界面里同样能确认：**设置 → 插件** 里能看到 `dsh-wallpaper-bg`、**设置 → 壁纸** 能打开面板。端口 8088 是历史选择（8080 曾被 Jenkins 占用）；换端口用环境变量 `WEAPI_PORT`，并在插件设置面板里把基地址改成对应值。
+> 验证：浏览器打开 `http://127.0.0.1:8088/health` 返回 JSON 即 WE 服务正常；插件侧则看 `<DSH 地址>/dsh-wallpaper-bg/health`——`dsh web` 默认端口 3080，即 `http://127.0.0.1:3080/dsh-wallpaper-bg/health`；桌面端固定 **19387**（0.2 桌面端启动 `desktop` profile 时写死 `--port 19387`），即 `http://127.0.0.1:19387/dsh-wallpaper-bg/health`。界面里同样能确认：**设置 → 插件** 里能看到 `dsh-wallpaper-bg`、**设置 → 壁纸** 能打开面板。端口 8088 是历史选择（8080 曾被 Jenkins 占用）；换端口用环境变量 `WEAPI_PORT`，并在插件设置面板里把基地址改成对应值。
 
 ## 设置面板说明
 
@@ -100,11 +100,11 @@ dsh plugin --profile web add dsh-wallpaper-bg
 | WE 基地址 + 刷新 | WE API 地址（默认 `http://127.0.0.1:8088`） |
 | 类型筛选 | 全部 / 视频 / 场景 / 网页，按壁纸真实类型过滤 WE 壁纸库 |
 | 分级筛选 | 全部 / 非18+ / 18+（基于 project.json 的 `contentrating`：18+ = Mature + Questionable），18+ 卡片带红色角标，面板实时显示筛选计数；每次进入 WE 页签默认回到「非18+」 |
-| 同步桌面壁纸 | 实时镜像当前桌面壁纸：采样 WE 正在桌面渲染的画面（约 1 秒一帧，内存内完成，不落盘）；状态行显示跟随的壁纸 / 上次同步时间 / 镜像状态，带「立即刷新」，页面重新可见时立即再跟一次；与 WE 队列互斥 |
+| 同步桌面壁纸 | 只读跟随当前桌面壁纸（30 秒轮询 + 切回页签立即跟随），再按类型渲染：场景 → 工坊预览图、视频 → 视频、图片 → 图片、网页 → iframe；状态行显示跟随的壁纸 / **显示器（含判定依据）** / 上次同步时间，带「立即刷新」；多显示器时出现**「跟随显示器」下拉**（自动 / 指定某台）；与 WE 队列互斥 |
 | 浅色雾层 / 深色遮罩 | 0–100%，随 DSH 主题自动切换：浅色外观铺半透明白雾垫在内容下方提升细字可读性，深色外观压黑遮罩 |
 | 背景模糊度 / 背景亮度 | 0–20px / 50–150% |
 | 安全放大 | 0–10%，按比例放大背景以裁掉边缘黑边 |
-| 场景壁纸说明 | 手动选中场景壁纸显示 WE 自带的工坊预览图（`preview.gif` / `preview.jpg`）；要看动的场景请开启「同步桌面壁纸」——实时镜像桌面渲染画面，无需烘焙、无本地渲染、无缓存文件 |
+| 场景壁纸说明 | 一律显示 WE 自带的工坊预览图（`preview.gif` / `preview.jpg`）；不本地渲染、不采样桌面画面、无缓存文件；要 100% 保真的动态场景可用 WE 录屏 / OBS 录成 MP4 后从「自定义上传」导入 |
 | 恢复默认 | 一键重置全部设置 |
 
 ## 原理
@@ -113,11 +113,9 @@ dsh plugin --profile web add dsh-wallpaper-bg
 
 | 半边 | 文件 | 职责 |
 | --- | --- | --- |
-| 宿主半（Node） | `lib/host.js` | 注册同源路由：`/dsh-wallpaper-bg/asset`（本地文件流式代理，支持 Range）、`/dsh-wallpaper-bg/we`（WE API 只读代理，带缓存，透传 `previewFile`）、`/dsh-wallpaper-bg/health` |
-| 浏览器半 | `lib/client.js` | 单文件 client bundle（`window.__ModuleLoader__` 工厂形式），注入背景层与遮罩、注册设置面板「壁纸」选项卡；「同步桌面壁纸」复用同一个 `<img>` 图层，每 ~1 秒向服务的 `/capture` 换一帧 |
+| 宿主半（Node） | `lib/host.js` | 注册同源路由：`/dsh-wallpaper-bg/asset`（本地文件流式代理，支持 Range）、`/dsh-wallpaper-bg/we`（WE API 只读代理，带缓存，透传 `previewFile` / `previewSize`，`action=current` 时透传「跟随显示器」的 `monitor` 并计入缓存键）、`/dsh-wallpaper-bg/health`（含 `monitorForward` 能力标记） |
+| 浏览器半 | `lib/client.js` | 单文件 client bundle（`window.__ModuleLoader__` 工厂形式），注入背景层与遮罩、注册设置面板「壁纸」选项卡；「同步桌面壁纸」只读跟随桌面壁纸，再按类型走普通渲染路径（场景 → 工坊预览图） |
 | 组合层 | `cordis.patch.yml` | `dsh.bundle` 补丁：把插件行插入 profile 组合的 host 平面，**随 DSH 启动即生效**（`dsh web` 与桌面端应用都一样），首次加载页面就带背景 |
-| 桌面壁纸捕获 | `wallpaper-engine-api/lib/desktop-capture.js` | 采样 Wallpaper Engine 正在桌面渲染的画面：`PrintWindow(Progman, PW_RENDERFULLCONTENT)`（DWM 合成路径，含 WE D3D 子窗口；BitBlt 兜底）→ 主屏区域 `StretchBlt` 缩放 → 内存 JPEG（koffi FFI + jpeg-js）。不本地渲染、无磁盘缓存 |
-
 两端零构建：`lib/client.js` 是手写的单文件 bundle，无需任何打包工具；另附 `dsh-wallpaper-bg` CLI（`install` / `status` / `uninstall`）完成一键安装——它面向命令行部署，会**跳过 `desktop` profile**（归 Electron 桌面端独占），桌面端请在**设置 → 插件**里安装，或用 `dsh plugin --profile desktop add dsh-wallpaper-bg`。
 
 ## 常见问题
@@ -126,18 +124,18 @@ dsh plugin --profile web add dsh-wallpaper-bg
 - **桌面端为什么 `dsh --profile desktop …` 报错？** 那个 profile 归 Electron 应用独占，终端启动会被拒绝：`profile "desktop" is managed exclusively by the Electron application`。这是设计如此——profile 由应用自己组合并启动。`dsh plugin --profile desktop <pnpm 参数>`（安装 / 列表 / 卸载）仍然可用，因为它只改 profile 的包清单。本包的 `dsh-wallpaper-bg install` 因此也会跳过 `desktop` 并提示走插件页面。
 - **桌面端需要 Node.js 吗？需要 WE 服务吗？** Node.js 不需要——桌面端自带 Node / pnpm 运行时，只有 `dsh web` 命令行方式才要求 Node ≥ 20。可选的「WE 壁纸库」来源不受影响：仍然需要 Windows + 本机 Wallpaper Engine + 8088 端口的 `wallpaper-engine-api` 服务，和 `dsh web` 一致。
 - **桌面端怎么确认插件加载了？** 打开 `http://127.0.0.1:19387/dsh-wallpaper-bg/health`，返回 `{"ok":true,"plugin":"dsh-wallpaper-bg","version":"…"}` 即宿主半已挂载（0.2 桌面端固定用 19387 端口跑 `desktop` profile）。界面里也能确认：**设置 → 插件** 里列出 `dsh-wallpaper-bg`（已安装 / 已启用），**设置 → 壁纸** 能打开面板。
-- **场景类壁纸在页面上怎么显示？** 两条路，都**不做本地渲染**：
-  - *手动选中 / 队列*：显示 WE 自带的工坊预览图（`preview.gif` / `preview.jpg`，WE 为每张壁纸生成的动图预览），零文件；
-  - *「同步桌面壁纸」（桌面镜像）*：页面直接显示 Wallpaper Engine 正在桌面渲染的画面——粒子飘动、水面波动、角色呼吸，和屏幕上一模一样——因为插件采样的是那些像素（`/capture`，约 1 秒一帧，JPEG 内存生成）。场景及视频 / 网页 / 图片类桌面壁纸一视同仁。
-- **还有本地场景渲染 / 烘焙吗？** 没有了。纯 JS 场景渲染器（`lib/we-renderer/`、`scene.pkg` 解析、shader 效果）与动画烘焙整套（`/scene-anim`、`~/.dsh-wallpaper-bg` 帧 / MP4 缓存）在 **0.4.0 已彻底移除**，`WE_SCENE_RENDER` 开关一并删除。旧端点一律 `404`，服务不再写 `~/.dsh-wallpaper-bg`（历史遗留目录可直接删除）。
-- **镜像为什么约 1 秒一帧、有点卡顿感？** `capture` 端点按每秒一次轮询，让 CPU / 带宽趋近于零；它是「镜像」而不是视频流。想要某张壁纸 100% 流畅：用 WE 托盘菜单的屏幕录制（或 OBS）把场景录 30 秒左右导出 MP4，再通过「自定义上传」传进来，浏览器里就是完整保真的动态壁纸。
-- **镜像黑屏 / 状态行提示捕获不可用？** 确认 Wallpaper Engine 正在运行、当前是交互桌面会话（服务要能找到 `Progman` 窗口）、WE API 服务已升级到 0.4.0（`http://127.0.0.1:8088/health` 应报 `"desktopCapture": 1`）。连续几帧失败后镜像会自动停止，面板会显示原因。
+- **「同步桌面壁纸」显示的壁纸和我桌面上那张不一样？** 先看状态行里的**显示器**那一项：WE 的 `config.json` 把当前壁纸按显示器存成 `selectedwallpapers.Monitor0 / Monitor1 / …`，键的编号由 WE 自己维护——显示器插拔、切换主屏、笔记本内屏关掉之后，`Monitor0` 常常**不是你正在看的那台**（旧版正是盲取 `Monitor0`，于是页面一直是「以前那张」，很容易被误判成缓存没清）。0.5.1 起服务会按「最近换过壁纸的那台 → 正在被读取 / 播放的那台 → `Monitor0` 兜底」自动判定，并在状态行里写明依据（`auto：最近换过壁纸的那台` 等）；多显示器时还能在**「跟随显示器」下拉**里直接钉死某台。服务需为 **0.5.1+**（`http://127.0.0.1:8088/health` 应含 `"monitorSelect": 1`），改完记得双击 `wallpaper-engine-api/重启服务(管理员).bat` 重启服务；**下拉可用还需要重启 DSH**（透传 `monitor` 的宿主半随 DSH 启动加载，插件会在下拉旁直接提示这一点）。
+- **场景类壁纸在页面上怎么显示？** 一律显示 WE 自带的工坊预览图（`preview.gif` / `preview.jpg`，WE 为每张壁纸生成的预览），**不做本地渲染、不采样桌面画面**：
+  - *手动选中 / 队列 / 桌面同步*：都是同一张工坊预览图，`preview.gif` 本身会动，零文件产生；
+  - *预览图很小、放大后发虚*：WE 的工坊预览图普遍只有 **192×192** 像素（状态行会实测列出，例如「实测 192×192 像素，全屏放大后必然发虚」）——这是预览图本身的尺寸，**不是缓存里的旧图、也不是没生效**；
+  - *想要 100% 保真的动态场景*：用 WE 托盘菜单的屏幕录制（或 OBS）把场景录 30 秒左右导出 MP4，再通过「自定义上传」传进来——浏览器里用原生 `<video>` 播放，完整流畅、零额外开销。
+- **还有本地场景渲染 / 烘焙，或者桌面画面捕获吗？** 都没有了。纯 JS 场景渲染器（`lib/we-renderer/`、`scene.pkg` 解析、shader 效果）与动画烘焙整套（`/scene-anim`、`~/.dsh-wallpaper-bg` 帧 / MP4 缓存）在 **0.4.0 已彻底移除**，`WE_SCENE_RENDER` 开关一并删除；0.4.x 用来镜像桌面的画面捕获（`/capture`，`koffi` + `jpeg-js`）在 **0.5.0 移除**。旧端点一律 `404`，服务不再写 `~/.dsh-wallpaper-bg`（历史遗留目录可直接删除）。
 - **网页类壁纸（web 类型）能正常显示吗？** 能——web 壁纸本来就是 HTML/JS 网页，插件会用 iframe 全屏原生渲染 `index.html` 及其相对资源（由 WE API 的 `/files/<id>/...` 目录路由只读提供，仅限已订阅壁纸目录）。WE API 0.2.6 起还会给网页注入一层 **WE 私有接口垫片**：把 `project.json` 里的默认用户属性喂给 `applyUserProperties`（否则只在属性回调里设置背景图的壁纸会只剩角色立在纯黑底上，看起来像一张竖屏壁纸），并提供音频 / 媒体接口占位与「已画出内容」上报——插件据此在壁纸真正有画面时才叠化入场，不再黑屏或空等。注意：背景层不拦截鼠标，所以壁纸的鼠标交互（点击、拖拽）不会生效，仅视觉效果；音频可视化会以静音数据运行（浏览器里没有 WE 的音频采集）。
 - **网页壁纸黑屏 / 半天不出画面？** 先确认 WE API 服务已升级到 0.2.6 并重启（`http://127.0.0.1:8088/health` 应含 `"webShim": 1`），旧版服务没有垫片，也没修 `../assets/...` 这类按 `file://` 写的相对路径。
 - **网页壁纸切换时资源反复重下？** 0.3.8 已修：服务 `/files` 路由原来整读文件且返回 `no-store`，现在流式发送 + `ETag` / `Last-Modified` 条件请求（HTML `no-cache`、静态资源 300 秒缓存）并支持 `Range`。
 - **视频有黑边？** 用「安全放大」拉 2–3% 即可裁掉画面自带的黑边（渲染层的 cover 裁剪已保证不自造黑边）。
 - **上传的视频黑屏 / 黑色占位？** 浏览器 `file.type` 为空的视频（常见于 .mkv / .mov）现在会按扩展名识别并走视频渲染，且每个视频都会自动生成首帧缩略图；若个别文件仍是黑的，多半是该编码浏览器不支持。
-- **改了代码不生效？** 只改 `lib/client.js` / `lib/host.js` 内容时，**普通刷新页面（F5）即可**——客户端 bundle 每次请求都从磁盘现读（`cache-control: no-cache`），无需重启服务；只有增删插件行、修改 `dsh.client` 声明等插件集合变化时才需要重启 DSH：`dsh web` 重启进程；桌面端按插件页面安装 / 卸载后的提示操作（需要重启时应用会明确提示）。
+- **改了代码不生效？** 分两半看：只改 `lib/client.js`（浏览器半）时**普通刷新页面（F5）即可**——客户端 bundle 每次请求都从磁盘现读（`cache-control: no-cache`）；改 `lib/host.js`（宿主半）或 `bin/` 之后**必须重启 DSH**（宿主半是 Node 侧 ESM 模块，随进程启动加载、进程内不会重新导入）——`dsh web` 重启进程，桌面端退出应用再打开。增删插件行 / 修改 `dsh.client` 声明等插件集合变化同样需要重启。判断当前跑的是哪版宿主半：打开 `<DSH 地址>/dsh-wallpaper-bg/health` 看 `version`（桌面端固定 19387 端口）。
 - **WE 壁纸库报错？** 确认 `wallpaper-engine-api` 服务在 8088 端口运行（浏览器访问 `http://127.0.0.1:8088/health` 验证），且插件设置里的基地址一致。
 - **在 WE 里删掉的壁纸还在插件里？** 服务会按 Steam 订阅清单过滤，退订的壁纸不再列出；若服务还是旧版本（`/health` 没有 `subscriptionsFile` 字段），双击 `重启服务(管理员).bat` 升级，然后点插件里的「刷新」。
 
@@ -151,7 +149,7 @@ MIT License，见 [LICENSE](LICENSE)。欢迎 issue / PR。
 
 ```powershell
 .\scripts\release.ps1 -DryRun              # 先预演：只检查不产生改动
-.\scripts\release.ps1 -Version 0.4.2       # 改版本号并发布
+.\scripts\release.ps1 -Version 0.5.1       # 改版本号并发布
 .\scripts\release.ps1                      # 发布 package.json 里的当前版本
 .\scripts\release.ps1 -Resume              # 上次中断后续跑
 ```

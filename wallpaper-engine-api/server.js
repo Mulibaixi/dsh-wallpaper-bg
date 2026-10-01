@@ -4,13 +4,15 @@
  * 为 dsh-wallpaper-bg 插件提供 Wallpaper Engine 壁纸库的只读 HTTP API。
  *
  * 端点（全部只读 GET，仅绑定 127.0.0.1）：
- *   GET /health、/            → 服务状态（含 webShim / desktopCapture 能力标记）
+ *   GET /health、/            → 服务状态（含 webShim / monitorSelect 能力标记与 weRunning）
  *   GET /api/wallpapers       → 已安装壁纸列表（含 /wallpapers 等别名）
- *   GET /api/current          → 当前桌面壁纸（含 /current 等别名）
+ *   GET /api/current[?monitor=]
+ *                             → 当前桌面壁纸（含 /current 等别名）。monitor 可显式指定
+ *                               MonitorN（或 N）跟随哪台显示器，缺省 auto = 自动判定
  *   GET /files/<id>/<rel>     → Web 类壁纸的目录文件（index.html 及其相对资源，
  *                               仅限已订阅壁纸目录内，供插件 iframe 原生渲染；
  *                               HTML 文档注入 WE 私有接口垫片，支持 ETag / Range）
- *   GET /capture?w=&q=        → 桌面壁纸实时捕获（JPEG，内存中生成，不落盘）
+ *   （0.4.x 的 GET /capture 桌面画面捕获已在 0.5.0 移除，一律返回 404）
  *
  * 隔离原则：
  *   - 只调用 wallpaper-engine-api 的 listWallpapers() / wallpaper().current()，
@@ -18,17 +20,24 @@
  *   - 调用 current() 前先用 tasklist 确认 WE 正在运行，未运行直接返回 null，
  *     避免 -control 命令意外拉起 Wallpaper Engine 主程序。
  *
- * 桌面壁纸同步（/capture）：
- *   不去解析 scene.pkg、不本地渲染、不烘焙视频、不产生任何缓存文件——Wallpaper
- *   Engine 已经在桌面上用自己的引擎（GPU）实时渲染当前壁纸（场景的粒子 / 着色器 /
- *   骨骼动画都在动），这里只对桌面壁纸层做一次 DWM 采样并就地编码 JPEG 返回：
- *   PrintWindow(Progman, PW_RENDERFULLCONTENT)（DWM 合成路径，含 WE 的
- *   WPEDesktopDX11Window 子窗口；新式独立 swapchain 下 GDI BitBlt 会拿到黑帧，
- *   PrintWindow 才可靠，失败时回退 BitBlt）
- *   → 主屏区域 StretchBlt 缩放 → GetDIBits → jpeg-js。全程内存内完成，
- *   黑帧由 X-Capture-Black 上报（客户端据此提示而不是默默黑屏）。
- *   实现见 lib/desktop-capture.js（需要 koffi / jpeg-js，随 npm install 安装）。
+ * 桌面壁纸同步（/api/current）：
+ *   只读读取 WE 当前桌面壁纸，原样交给插件端按类型正常渲染——场景 → 工坊预览图
+ *   （preview.gif / preview.jpg）、视频 → 视频、图片 → 图片、网页 → iframe。服务端不解析
+ *   scene.pkg、不本地渲染、不采样桌面画面、不产生任何缓存文件。
  *
+ *   ⚠ 显示器选择（0.5.1 修复）：WE 的 config.json 把当前壁纸**按显示器**存成
+ *   general.wallpaperconfig.selectedwallpapers = { Monitor0, Monitor1, … }，键的编号由 WE
+ *   自己维护、显示器插拔 / 切换主屏后不一定还是「你现在看的那台」。旧实现直接取 Monitor0，
+ *   于是多显示器（或笔记本 + 外接屏）用户会跟到另一台屏上的旧壁纸——页面上一直是「以前那张」。
+ *   现在按下面的顺序判定跟随哪台显示器（每一步都可复现，不加任何依赖、不采样屏幕）：
+ *     1. manual：请求显式指定（插件设置面板的「跟随显示器」）；
+ *     2. changed：wallpaperconfigrecent 最后两条配置的差异 → 用户最近真正换过壁纸的那台显示器
+ *        （WE 每次应用壁纸都会追加一条，最后一条即最新；日常使用中就是「正在看的那台」）；
+ *     3. live：各显示器壁纸对应媒体文件的 atime 最新者（正在被 WE 读取 / 播放的那张；
+ *        atime 被系统关闭时自然失效）；
+ *     4. first：Monitor0（键序第一台，旧行为兜底）。
+ *   响应同时带上 monitor / monitorSource / monitors[]，插件端据此显示状态行与显示器下拉。
+
  * 订阅过滤：列表按 Steam UGC 订阅清单（userdata/<id>/ugc/431960_subscriptions.vdf）
  * 过滤，已退订 / 本地禁用但文件夹仍残留的壁纸不会出现在列表里，与 WE 界面一致；
  * 清单读不到时退化为不过滤。可用环境变量 WE_SUBSCRIPTIONS_FILE 或
@@ -52,7 +61,6 @@ const os = require('os')
 const { execFile } = require('child_process')
 const { createReadStream } = fs
 const { WallpaperEngineApi } = require('wallpaper-engine-api')
-const { captureJpeg, probe: probeCapture } = require('./lib/desktop-capture.js')
 
 const PORT = Number(process.env.WEAPI_PORT || 8088)
 const HOST = '127.0.0.1'
@@ -288,7 +296,7 @@ function enrich(w) {
   if (fs.existsSync(gifPath)) previewFile = gifPath
   else if (pj && typeof pj.preview === 'string' && pj.preview) previewFile = path.join(dir, pj.preview)
   else if (typeof w.preview === 'string' && w.preview) previewFile = w.preview
-  // 场景壁纸：不再本地渲染（scene.pkg 由 WE 自己在桌面渲染，插件端经 /capture 同步），
+  // 场景壁纸：不本地渲染（不解析 scene.pkg），插件端显示 WE 工坊预览图，
   // 这里只声明工坊预览图（preview.gif / preview.jpg）作为手动点选时的展示来源。
   return {
     id: String(w.id),
@@ -337,35 +345,177 @@ function isWeRunning() {
 }
 
 /**
- * 读取当前桌面壁纸（纯只读）。
+ * 读取 WE 的 config.json（纯只读，不碰 WE 的任何写入接口，也不会拉起 WE 主程序）。
+ * WE 未安装 / 文件被占用 / 内容损坏时返回 null。
+ */
+function readWeConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(WE_INSTALL_PATH, 'config.json'), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/** config.json 顶层按 Windows 用户名分节；取当前用户的 general 节 */
+function currentUserGeneral(cfg) {
+  const user = cfg && cfg[os.userInfo().username]
+  return (user && user.general) || null
+}
+
+/**
+ * 各显示器当前壁纸文件：{ Monitor0: 'E:\\…\\scene.pkg', Monitor1: 'E:\\…\\a.mp4', … }
+ * 键由 WE 维护（MonitorN），顺序按数字排好，便于稳定兜底。
+ */
+function selectedWallpaperFiles(cfg) {
+  const general = currentUserGeneral(cfg)
+  const selected = general && general.wallpaperconfig && general.wallpaperconfig.selectedwallpapers
+  const out = new Map()
+  if (!selected || typeof selected !== 'object') return out
+  for (const key of Object.keys(selected)) {
+    const entry = selected[key]
+    const file = entry && typeof entry.file === 'string' ? entry.file : ''
+    if (key && file) out.set(key, path.normalize(file))
+  }
+  return new Map([...out.entries()].sort((a, b) => {
+    const ma = /^Monitor(\d+)$/i.exec(a[0])
+    const mb = /^Monitor(\d+)$/i.exec(b[0])
+    if (ma && mb) return Number(ma[1]) - Number(mb[1])
+    return a[0].localeCompare(b[0])
+  }))
+}
+
+/** 壁纸配置条目 → 它记录的各显示器文件映射（wallpaperconfigrecent 里的 config 用） */
+function configFiles(entry) {
+  const selected = entry && entry.config && entry.config.selectedwallpapers
+  const out = {}
+  if (selected && typeof selected === 'object') {
+    for (const key of Object.keys(selected)) {
+      out[key] = String((selected[key] && selected[key].file) || '')
+    }
+  }
+  return out
+}
+
+/**
+ * 用户最近真正「换过壁纸」的是哪台显示器。
+ *
+ * WE 每应用一次壁纸就往 general.wallpaperconfigrecent 追加一条（最后一条最新），
+ * 对比最后两条配置里发生变化的键即可看出改的是哪台显示器——日常使用中就是用户
+ * 正在看、正在切换壁纸的那台（另一台的壁纸往往几个月不变）。
+ * 变化键不唯一（例如整体重设 / 列表还没攒够两条）时返回 null，交给下一级判定。
+ */
+function lastChangedMonitorKey(cfg) {
+  const general = currentUserGeneral(cfg)
+  const recent = general && general.wallpaperconfigrecent
+  if (!Array.isArray(recent) || recent.length < 2) return null
+  const latest = configFiles(recent[recent.length - 1])
+  const previous = configFiles(recent[recent.length - 2])
+  const keys = new Set([...Object.keys(latest), ...Object.keys(previous)])
+  const changed = [...keys].filter((k) => (latest[k] || '') !== (previous[k] || ''))
+  return changed.length === 1 ? changed[0] : null
+}
+
+/** 壁纸配置里的 file 可能直接指向 project.json（本地壁纸），这里解出真正被读取的媒体文件 */
+function mediaFileOf(file) {
+  const norm = path.normalize(file)
+  if (path.basename(norm).toLowerCase() !== 'project.json') return norm
+  const pj = readProjectJson(norm)
+  if (pj && typeof pj.file === 'string' && pj.file) return path.join(path.dirname(norm), pj.file)
+  return norm
+}
+
+/**
+ * 正在被 WE 读取 / 播放的那张壁纸在哪台显示器：媒体文件 atime 最新者。
+ * WE 会在加载 / 持续播放时读取该文件，没在渲染的那台显示器上的壁纸不会被读取
+ * （实测未被渲染的 scene.pkg atime 停在一周前）。atime 被系统关掉时判定失效 → 返回 null。
+ */
+function liveMonitorKey(files) {
+  let key = null
+  let newest = 0
+  let second = 0
+  for (const [monitor, file] of files) {
+    let atime = 0
+    try {
+      atime = fs.statSync(mediaFileOf(file)).atimeMs
+    } catch {
+      atime = 0
+    }
+    if (atime > newest) {
+      second = newest
+      newest = atime
+      key = monitor
+    } else if (atime > second) {
+      second = atime
+    }
+  }
+  if (!key || newest <= 0) return null
+  // 只有「明显更新」（严格晚于其它显示器）才算数，避免两台同时渲染时随机挑一台
+  return { key, exclusive: newest > second }
+}
+
+/** 请求里的 monitor 参数 → 真正存在的显示器键（'1' / 'monitor1' / 'Monitor1' 都接受） */
+function normalizeMonitorParam(raw, files) {
+  const text = typeof raw === 'string' ? raw.trim() : ''
+  if (!text || /^auto$/i.test(text)) return null
+  if (files.has(text)) return text
+  const m = /^(?:monitor)?\s*(\d+)$/i.exec(text)
+  if (m) {
+    const key = 'Monitor' + m[1]
+    if (files.has(key)) return key
+  }
+  return null
+}
+
+/** 工坊预览图的像素尺寸（只解析 GIF / PNG / JPEG 头；解析不出返回 null） */
+function imageSizeOf(file) {
+  try {
+    const fd = fs.openSync(file, 'r')
+    try {
+      const head = Buffer.alloc(32)
+      const read = fs.readSync(fd, head, 0, 32, 0)
+      if (read < 10) return null
+      if (head.slice(0, 6).toString('latin1') === 'GIF87a' || head.slice(0, 6).toString('latin1') === 'GIF89a') {
+        return { w: head.readUInt16LE(6), h: head.readUInt16LE(8) }
+      }
+      if (head.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+        return { w: head.readUInt32BE(16), h: head.readUInt32BE(20) }
+      }
+      if (head[0] === 0xff && head[1] === 0xd8) {
+        // JPEG：顺序扫 SOF0..SOF3/SOF5..SOF7/SOF9..SOF11 段取尺寸
+        const buf = fs.readFileSync(file)
+        let i = 2
+        while (i + 9 < buf.length) {
+          if (buf[i] !== 0xff) { i++; continue }
+          const marker = buf[i + 1]
+          if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+            return { w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) }
+          }
+          const len = buf.readUInt16BE(i + 2)
+          if (len <= 0) break
+          i += 2 + len
+        }
+      }
+    } finally {
+      fs.closeSync(fd)
+    }
+  } catch {
+    /* 解析失败就算了（不影响壁纸本身） */
+  }
+  return null
+}
+
+/**
+ * 由壁纸文件构造插件可消费的条目（纯只读）。
  *
  * 新版 Wallpaper Engine 把渲染分离到 wallpaperservice32.exe，
- * 命令行 `-control getWallpaper` 不再返回内容，因此这里直接解析
- * WE 安装目录下 config.json 的 general.wallpaperconfig.selectedwallpapers：
- * 该字段由各显示器当前壁纸的文件路径组成，取 Monitor0（缺失时取第一个）。
+ * 命令行 `-control getWallpaper` 不再返回内容，因此这里解析 config.json 里记录的壁纸
+ * 文件路径 + 同目录 project.json。
  */
-async function getCurrent() {
+function itemFromWallpaperFile(file) {
   try {
-    const cfgPath = path.join(WE_INSTALL_PATH, 'config.json')
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
-    const userCfg = cfg[os.userInfo().username]
-    const wallCfg = userCfg && userCfg.general && userCfg.general.wallpaperconfig
-    const selected = wallCfg && wallCfg.selectedwallpapers
-    if (!selected || typeof selected !== 'object') return null
-
-    let file = null
-    if (selected.Monitor0 && typeof selected.Monitor0.file === 'string') {
-      file = selected.Monitor0.file
-    } else {
-      const key = Object.keys(selected)[0]
-      if (key && selected[key] && typeof selected[key].file === 'string') {
-        file = selected[key].file
-      }
-    }
-    if (!file) return null
-
     let norm = path.normalize(file)
     let dir = path.dirname(norm)
+    if (!fs.existsSync(norm)) return null
     const pjPath = path.join(dir, 'project.json')
     const pj = readProjectJson(pjPath)
 
@@ -401,6 +551,11 @@ async function getCurrent() {
     } else if (pj && typeof pj.preview === 'string' && pj.preview) {
       thumbnail = path.join(dir, pj.preview)
     }
+    // 与 enrich() 一致：工坊预览图（绝对路径，preview.gif / preview.jpg），
+    // 场景壁纸不本地渲染：插件端显示工坊预览图（preview.gif / preview.jpg）
+    const previewFile = fs.existsSync(gifPath)
+      ? gifPath
+      : (pj && typeof pj.preview === 'string' && pj.preview ? path.join(dir, pj.preview) : '')
     return {
       id: path.basename(dir),
       title: pj && typeof pj.title === 'string' && pj.title ? pj.title : path.basename(dir),
@@ -409,11 +564,10 @@ async function getCurrent() {
       entry: pj && typeof pj.file === 'string' ? pj.file : '',
       thumbnail,
       previewUrl: '',
-      // 与 enrich() 一致：工坊预览图（绝对路径，preview.gif / preview.jpg），
-      // 场景壁纸由插件端经 /capture 同步桌面实时画面，不再本地渲染
-      previewFile: fs.existsSync(gifPath)
-        ? gifPath
-        : (pj && typeof pj.preview === 'string' && pj.preview ? path.join(dir, pj.preview) : ''),
+      previewFile,
+      // 工坊预览图像素尺寸：插件端据此如实提示「预览图本身只有 192×192，放大后会发虚」，
+      // 免得用户把它当成「缓存里的旧图 / 没生效」。解析不出为 null。
+      previewSize: previewFile ? imageSizeOf(previewFile) : null,
       tags: pj && Array.isArray(pj.tags) ? pj.tags : [],
       description: pj && typeof pj.description === 'string' ? pj.description : '',
       rating,
@@ -421,6 +575,54 @@ async function getCurrent() {
   } catch {
     return null
   }
+}
+
+/**
+ * 解析「当前桌面壁纸」：跟随哪台显示器 + 那台的壁纸条目。
+ *
+ * @param {string} [monitorParam] 请求里的 monitor（'auto' / 'Monitor1' / '1'；空 = auto）
+ * @returns {{ current: object|null, monitor: string|null, monitorSource: string, monitors: object[] }}
+ *   monitorSource: manual（显式指定）| changed（最近换过壁纸的显示器）| live（正在播放的显示器）
+ *                  | first（键序第一台兜底）| none（WE 里没有任何显示器壁纸记录）
+ */
+function resolveCurrent(monitorParam) {
+  const cfg = readWeConfig()
+  const files = selectedWallpaperFiles(cfg)
+  if (!files.size) return { current: null, monitor: null, monitorSource: 'none', monitors: [] }
+
+  const manual = normalizeMonitorParam(monitorParam, files)
+  const changed = lastChangedMonitorKey(cfg)
+  const live = liveMonitorKey(files)
+
+  let monitor = null
+  let source = ''
+  if (manual) {
+    monitor = manual
+    source = 'manual'
+  } else if (changed && files.has(changed)) {
+    monitor = changed
+    source = 'changed'
+  } else if (live && live.exclusive) {
+    monitor = live.key
+    source = 'live'
+  } else {
+    monitor = [...files.keys()][0]
+    source = 'first'
+  }
+
+  const items = new Map()
+  for (const [key, file] of files) items.set(key, itemFromWallpaperFile(file))
+  const monitors = [...files.keys()].map((key) => {
+    const item = items.get(key) || null
+    return {
+      key,
+      title: item ? item.title : null,
+      type: item ? item.type : '',
+      live: !!(live && live.key === key),
+      selected: key === monitor,
+    }
+  })
+  return { current: items.get(monitor) || null, monitor, monitorSource: source, monitors }
 }
 
 // ---------------------------------------------------------------------------
@@ -725,48 +927,6 @@ function refererWorkshopId(req) {
 // HTTP 服务
 // ---------------------------------------------------------------------------
 
-/**
- * GET /capture?w=&q=
- * 桌面壁纸实时捕获（JPEG，单帧，内存生成，不落盘）。
- * 就是「同步桌面壁纸」的核心：不本地渲染、不烘焙——直接采样 Wallpaper Engine
- * 正在桌面上实时渲染的画面（PrintWindow(Progman, PW_RENDERFULLCONTENT)，含 WE
- * D3D 子窗口；DWM 合成下 GDI BitBlt 拿不到时 PrintWindow 才行，失败回退 BitBlt）。
- * 插件端在同步 / 桌面镜像场景下以约 1 秒间隔轮询此端点即可看到会动的桌面壁纸。
- */
-function serveCapture(req, res, url) {
-  const w = Number(url.searchParams.get('w'))
-  const q = Number(url.searchParams.get('q'))
-  try {
-    const frame = captureJpeg({
-      width: Number.isFinite(w) && w >= 160 && w <= 3840 ? w : 1280,
-      quality: Number.isFinite(q) && q >= 30 && q <= 95 ? q : 70,
-    })
-    const headers = {
-      'Content-Type': 'image/jpeg',
-      'Content-Length': String(frame.data.length),
-      'Cache-Control': 'no-store',
-      'Access-Control-Allow-Origin': '*',
-      'X-Capture-W': String(frame.width),
-      'X-Capture-H': String(frame.height),
-      'X-Capture-Ms': String(Date.now() - frame.capturedAt),
-      // 1 = 本帧判定为纯黑（WE 暂停渲染 / 桌面被遮盖），客户端据此提示而不是默默黑屏
-      'X-Capture-Black': frame.black ? '1' : '0',
-    }
-    if (req.method === 'HEAD') {
-      res.writeHead(200, headers)
-      return res.end()
-    }
-    res.writeHead(200, headers)
-    return res.end(frame.data)
-  } catch (err) {
-    return sendJson(res, 503, {
-      ok: false,
-      error: '桌面壁纸捕获失败: ' + String((err && err.message) || err),
-      hint: '需要运行中的 Wallpaper Engine 与可用的交互桌面（Progman 窗口）',
-    })
-  }
-}
-
 function sendJson(res, code, obj) {
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -790,18 +950,14 @@ const server = http.createServer(async (req, res) => {
   try {
     if (p === '/' || p === '/health' || p === '/api/health') {
       const subFiles = findSubscriptionsFiles()
-      const cap = probeCapture()
       return sendJson(res, 200, {
         ok: true,
         service: 'we-api-proxy',
-        version: '0.4.0',
+        version: '0.5.1',
         // 网页壁纸兼容垫片版本：插件可据此判断服务是否需要升级（0 = 旧版，无垫片）
         webShim: 1,
-        // 桌面壁纸实时捕获：1 = /capture 可用（插件「同步桌面壁纸」据此镜像桌面；
-        // 不依赖任何本地渲染 / 缓存，纯捕获 WE 在桌面上实时渲染的画面）
-        desktopCapture: cap.desktopCapture,
-        captureError: cap.captureError,
-        primary: cap.primary,
+        // /api/current 支持 ?monitor= 显式指定跟随哪台显示器（1 = 支持；插件据此显示显示器下拉）
+        monitorSelect: 1,
         mode: 'readonly',
         weInstallPath: WE_INSTALL_PATH,
         workshopPath: WE_WORKSHOP_PATH,
@@ -827,10 +983,8 @@ const server = http.createServer(async (req, res) => {
       p === '/api/current' || p === '/current' ||
       p === '/api/wallpapers/current' || p === '/wallpapers/current' || p === '/api/state'
     ) {
-      return sendJson(res, 200, { ok: true, current: await getCurrent() })
-    }
-    if (p === '/capture') {
-      return serveCapture(req, res, url)
+      const monitor = url.searchParams.get('monitor') || url.searchParams.get('m') || ''
+      return sendJson(res, 200, Object.assign({ ok: true }, resolveCurrent(monitor)))
     }
     if (p.startsWith('/files/')) {
       const parsed = parseFilesPath(p)
@@ -858,12 +1012,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log('[WE-API] 只读代理服务已启动: http://' + HOST + ':' + PORT)
-  console.log('[WE-API] 端点: /health  /api/wallpapers  /api/current  /files/<id>/...  /capture')
-  const cap = probeCapture()
-  console.log(
-    '[WE-API] 桌面壁纸捕获（/capture）: ' +
-    (cap.desktopCapture ? '可用（内存中采样桌面画面，不落盘、不渲染）' : '不可用 — ' + cap.captureError),
-  )
+  console.log('[WE-API] 端点: /health  /api/wallpapers  /api/current  /files/<id>/...')
   console.log('[WE-API] 壁纸库: ' + WE_WORKSHOP_PATH)
   console.log('[WE-API] 本服务只读，不调用任何设置/播放壁纸的接口，桌面壁纸不受影响。')
 })
