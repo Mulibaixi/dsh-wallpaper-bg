@@ -2,6 +2,24 @@
 
 本文件记录 dsh-wallpaper-bg 的用户可见变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.5.2] - 2026-10-01
+
+### 新增
+
+- **主页面「原生背景」开关**（标题区 DSH 标旁边，空白首页与会话页都在）：一键清掉浅色雾层 / 深色遮罩，以及插件给界面表面加的半透明覆盖，让壁纸完整透出；输入框座位与弹窗仍保留半透明可读底色，细字不受影响。关掉开关即恢复原来的雾层 / 遮罩数值，开关状态持久化到 localStorage。开关本体是胶囊开关：跟随 DSH 主题令牌、支持键盘焦点环（`:focus-visible`）、`role="switch"` + `aria-checked` 无障碍语义，并在 `prefers-reduced-motion` 下关闭过渡动画。
+
+### 修复
+
+- **切换「原生背景」或拖动外观滑杆时背景闪烁**：只改外观的 `setState`（原生背景、浅色雾层 / 深色遮罩、模糊度、亮度、安全放大）不再走 `applyNow()`——那条路径会重新加载壁纸并交叉淡入，拖动滑杆时会一路闪——改为直接更新当前图层（遮罩 / 滤镜 / 缩放）。
+- **开关滑块圆点不可见**：拇指颜色原用 `--dsw-alias-switch-thumb`，而本版 DSH 并没有这个令牌（解析为空 → 圆点透明，只剩一条色带）；改用实际存在的 `--dsw-static-neutral-00` / `--dsw-static-neutral-bluish-1000` 并带字面兜底，深色主题「开启」时拇指按 DSH 习惯显示为深色。
+- **WE API 启动脚本的依赖检查**：`启动服务.bat` 从「只看 `node_modules\wallpaper-engine-api` 目录在不在」改成校验该包的 `package.json`——目录建出来但装到一半也能被发现，重新跑 `npm install` 补装。同时不再检查 `koffi` / `jpeg-js`：它们随 0.5.0 的桌面画面捕获一并移除，留着会让每次启动都白跑一次 `npm install`。
+
+### 变更
+
+- 新增浅色外观下的原生背景实拍图 `docs/screenshots/overview-native-light.jpg`（1440×765，190KB），README / README.zh.md 同步引用。
+- README / README.zh.md 的发布示例改为 `-Version x.y.z`：发布脚本会按旧版本号批量替换 README 里的字符串，写死版本号每次发版都要顺手改一遍。
+- 插件版本 0.5.2（宿主半 `/dsh-wallpaper-bg/health` 的 `version` 同步为 0.5.2，`monitorForward: 1` 不变）；WE API 服务仍是 **0.5.1**——服务端代码本次未改，只改了它的启动脚本。
+
 ## [0.5.1] - 2026-10-01
 
 > 本版**一并发布此前未单独发版的 0.5.0**（「同步桌面壁纸」回到只读跟随、场景改显示工坊预览图、WE API 服务移除桌面画面捕获等）——完整说明见下方 [0.5.0] 条目。

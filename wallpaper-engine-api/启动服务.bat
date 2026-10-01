@@ -21,16 +21,23 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem ---- Dependencies: auto install on first run ----
-if not exist "%~dp0node_modules\wallpaper-engine-api" (
-  echo [SETUP] First run: installing wallpaper-engine-api ...
-  call npm install
-  if errorlevel 1 (
-    echo [ERROR] npm install failed. Check your network / npm registry.
-    pause
-    exit /b 1
-  )
+rem ---- Dependencies: check direct packages and recover missing installs ----
+rem Since 0.5.0 the only direct dependency is wallpaper-engine-api (koffi / jpeg-js
+rem were removed with desktop capture). Checking its package.json also catches a
+rem half-finished install where the folder exists but the package is incomplete.
+if not exist "%~dp0node_modules\wallpaper-engine-api\package.json" goto :install_deps
+goto :deps_ready
+
+:install_deps
+echo [SETUP] Required packages are missing; running npm install ...
+call npm install
+if errorlevel 1 (
+  echo [ERROR] npm install failed. Check your network / npm registry.
+  pause
+  exit /b 1
 )
+
+:deps_ready
 
 rem ---- First run wizard ----
 if /i "%~1"=="/setup" goto :wizard
