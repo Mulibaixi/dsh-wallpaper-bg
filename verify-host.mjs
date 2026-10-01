@@ -5,9 +5,12 @@
 // 用法：node verify-host.mjs
 //       WEAPI_BASE=http://127.0.0.1:8099 node verify-host.mjs
 import { Writable } from 'node:stream'
+import { readFileSync } from 'node:fs'
 import plugin from './lib/host.js'
 
 const WE_BASE = (process.env.WEAPI_BASE || 'http://127.0.0.1:8088').replace(/\/+$/, '')
+// 版本断言跟 package.json 对齐：每次发版改版本号不用再回来改这里（改漏了就变成假失败）
+const PKG_VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
 let pass = 0
 let fail = 0
 const ok = (name, cond, extra = '') => {
@@ -71,7 +74,7 @@ async function call(path, headers = {}) {
 
 const health = JSON.parse((await call('/dsh-wallpaper-bg/health')).text)
 console.log('host health:', JSON.stringify(health))
-ok('host version 0.5.1', health.version === '0.5.1')
+ok(`host version ${PKG_VERSION}`, health.version === PKG_VERSION)
 ok('host monitorForward=1（monitor 会透传）', health.monitorForward === 1)
 
 const auto = JSON.parse((await call('/dsh-wallpaper-bg/we?action=current&base=' + encodeURIComponent(WE_BASE))).text)

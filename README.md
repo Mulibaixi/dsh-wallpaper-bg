@@ -1,12 +1,14 @@
 # dsh-wallpaper-bg
 
-> v0.5.1 · MIT License
+> v0.5.2 · MIT License
 
 English | [中文](README.zh.md)
 
-A static two-half plugin that puts an **independent animated wallpaper layer** under the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) interface — the browser UI (`dsh web`) and the 0.2 **desktop app** alike: install it (one command on the CLI, or just a package name in the desktop app's plugin page), and the whole interface sits on a moving wallpaper. Ships with 10 high-res Unsplash images, supports uploading local images / videos, and can read-only connect to your local Wallpaper Engine library — video and web wallpapers render natively in the browser, while **「同步桌面壁纸」 read-only follows the desktop wallpaper** (whatever the desktop switches to shows up on the page: scenes as their workshop preview `preview.gif`, videos / images / web pages rendered natively — no screen sampling, zero local rendering and zero cache files). In light theme a translucent white fog is layered in automatically, in dark theme a dimming overlay is applied, so fine text stays readable. The background layer is fully independent from the desktop Wallpaper Engine: changing wallpapers inside DSH never touches your desktop wallpaper, and vice versa.
+A static two-half plugin that puts an **independent animated wallpaper layer** under the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) interface — the browser UI (`dsh web`) and the 0.2 **desktop app** alike: install it (one command on the CLI, or just a package name in the desktop app's plugin page), and the whole interface sits on a moving wallpaper. Ships with 10 high-res Unsplash images, supports uploading local images / videos, and can read-only connect to your local Wallpaper Engine library — video and web wallpapers render natively in the browser, while **「同步桌面壁纸」 read-only follows the desktop wallpaper** (whatever the desktop switches to shows up on the page: scenes as their workshop preview `preview.gif`, videos / images / web pages rendered natively — no screen sampling, zero local rendering and zero cache files). In light theme a translucent white fog is layered in automatically, in dark theme a dimming overlay is applied, so fine text stays readable. A **Native background** switch on the main conversation page clears that fog / overlay and the plugin's translucent page surfaces in one click, so the wallpaper shows through completely, while the composer and dialogs keep their readable surfaces. The background layer is fully independent from the desktop Wallpaper Engine: changing wallpapers inside DSH never touches your desktop wallpaper, and vice versa.
 
 ![DSH interface in dark theme](docs/screenshots/overview-dark.jpg)
+
+![Native background mode in light theme](docs/screenshots/overview-native-light.jpg)
 
 ![More UI previews (1)](docs/screenshots/screenshot-01.jpg)
 
@@ -30,6 +32,7 @@ A static two-half plugin that puts an **independent animated wallpaper layer** u
   - Web wallpapers (native iframe rendering of `index.html` in the browser).
 - **Zero local rendering, zero cache files**: the plugin never parses `scene.pkg`, never renders scene frames, never bakes videos and never samples the desktop — no `~/.dsh-wallpaper-bg`, no frame files, no MP4s. The local scene renderer and the animation-baking stack were **removed in 0.4.0** together with the `WE_SCENE_RENDER` switch; the desktop-frame capture (`/capture`) that 0.4.x used for mirroring was **removed in 0.5.0**.
 - **Four adjustments**: light fog / dark overlay (auto-switching with the DSH theme), background blur (0–20px), background brightness (50–150%), safe zoom (0–10% to crop edge letterboxing).
+- **Native background switch on the main page**: clears the light fog, the dark overlay and the translucent page surfaces in one click, so the wallpaper is fully visible; the composer and dialogs keep their readable surfaces. Turning it off restores the saved fog / overlay values, and the switch state persists.
 - **Black-flash-free switching**: every wallpaper change (including queue rotation) cross-fades two stacked layers — the incoming wallpaper preloads and finishes decoding / first-frame playback in its own layer, then blends with the outgoing one over ~0.42s, and the old layer is only removed after it has faded out. Applies to all render modes (image, video, scene preview, web), so no frame of the transition is ever empty.
 - **Next-item warm-up**: while a queue item is on screen, the next one is fetched ahead of time (network images downloaded and decoded, WE videos buffered in a real `<video>` element, custom uploads read from IndexedDB with an objectURL ready), so the cross-fade starts almost immediately instead of waiting on the network.
 - **White-intro skipping**: some wallpaper videos literally open with a pure-white intro (e.g. the Arknights "喧闹法则" video is entirely white for its first 2 seconds). The warm-up phase probes for the first non-white frame and playback starts there, so switching to such a wallpaper no longer shows a blank white screen.
@@ -38,7 +41,7 @@ A static two-half plugin that puts an **independent animated wallpaper layer** u
 - **View-only source tabs**: switching between 内置壁纸 / 自定义上传 / WE 壁纸库 only changes what the panel shows — the background stays untouched until you explicitly click a wallpaper, operate a queue, or enable 同步桌面壁纸 (which mutually excludes the WE queue).
 - **Sync desktop wallpaper** toggle: **read-only follow of the current desktop wallpaper** — whatever wallpaper the desktop switches to shows up on the page (30 s polling, and immediately when the DSH tab regains focus), then renders by type: scenes show their workshop preview (`preview.gif` / `preview.jpg`), videos play as video, images show as images, web wallpapers render in a native iframe. A sync status line in the panel shows the followed wallpaper (title / type), **which monitor is followed and why**, and the last-sync time, with a 立即刷新 button. **Multi-monitor setups are resolved automatically** (the monitor whose wallpaper changed most recently → the one currently being read / played → `Monitor0` as a last resort), and the status line also lets you **pin a specific monitor**. It never changes your desktop wallpaper, never samples the screen and never writes a cache file.
 - WE library filters: type (all / video / scene / web) + rating (all / safe / 18+; 18+ cards carry a red badge with live counts). The rating filter resets to **safe** every time the WE tab is opened.
-- Settings persist to localStorage; the UI surface auto-turns semi-transparent to reveal the background.
+- Settings persist to localStorage; the UI surface auto-turns semi-transparent to reveal the background, with a main-page switch to temporarily reveal it fully.
 
 ## Installation
 
@@ -101,6 +104,7 @@ Service **0.5.1** is a plain read-only list / file service: `/health`, `/api/wal
 | Type filter | all / video / scene / web, by the wallpaper's real type |
 | Rating filter | all / safe / 18+ (from `contentrating` in project.json: 18+ = Mature + Questionable), 18+ cards carry a red badge with live counts; resets to **safe** every time the WE tab is entered |
 | Sync desktop wallpaper | Read-only follow of the current desktop wallpaper (30 s polling, immediate on tab focus), rendered by type: scene → workshop preview, video → video, image → image, web → iframe; the status line shows the followed wallpaper / **monitor (plus how it was chosen)** / last-sync time with a refresh-now button; with multiple monitors a **monitor picker** appears (auto / pin one); mutually exclusive with the WE queue |
+| Native background switch | On the main conversation header: clears the wallpaper fog / overlay and the translucent page surfaces while keeping the composer and dialogs readable; turning it off restores the saved fog / overlay values |
 | Light fog / dark overlay | 0–100%, auto-switching with the DSH theme: translucent white fog in light theme to lift fine text, dark overlay in dark theme |
 | Background blur / brightness | 0–20px / 50–150% |
 | Safe zoom | 0–10% scale-up to crop edge letterboxing |
@@ -151,7 +155,7 @@ The repo ships a one-shot release script, `scripts/release.ps1`, which fixes the
 
 ```powershell
 .\scripts\release.ps1 -DryRun              # rehearse: checks only, no changes
-.\scripts\release.ps1 -Version 0.5.1       # bump version and release
+.\scripts\release.ps1 -Version x.y.z       # bump version and release
 .\scripts\release.ps1                      # release the version in package.json
 .\scripts\release.ps1 -Resume              # finish a run that was interrupted mid-way
 ```
