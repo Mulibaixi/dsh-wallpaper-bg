@@ -43,6 +43,15 @@
     "plugin"
   ],
   "license": "MIT",
+  "author": "nishuoyang",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nishuoyang/dsh-wallpaper-bg.git"
+  },
+  "homepage": "https://github.com/nishuoyang/dsh-wallpaper-bg#readme",
+  "bugs": {
+    "url": "https://github.com/nishuoyang/dsh-wallpaper-bg/issues"
+  },
   "engines": {
     "node": ">=20"
   },
